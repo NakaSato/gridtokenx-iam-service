@@ -1,0 +1,73 @@
+[package]
+name = "gridtokenx-iam-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Web Framework
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["cors", "trace", "timeout"] }
+
+# Async Runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# Database
+sqlx = { workspace = true, features = [
+    "postgres",
+    "runtime-tokio-rustls",
+    "chrono",
+    "uuid",
+    "migrate",
+] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Authentication
+jsonwebtoken = { workspace = true, features = ["use_pem", "rust_crypto"] }
+bcrypt = { workspace = true }
+argon2 = { workspace = true }
+
+# Observability
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+regex = { workspace = true }
+
+# OpenTelemetry (SigNoz integration)
+opentelemetry = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry-semantic-conventions = { workspace = true }
+tonic = { workspace = true }
+
+# API Documentation
+utoipa = { workspace = true, features = ["axum_extras", "uuid", "chrono"] }
+
+# Utilities
+chrono = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+config = { workspace = true }
+dotenvy = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+
+
+# gRPC
+connectrpc = { workspace = true }
+buffa = "0.2.0"
+http-body = "1.0.0"
+http = "1.0.0"
+tokio-util = "0.7.18"
+rust_decimal = { version = "1.36.0", features = ["serde-float", "maths"] }
+
+[build-dependencies]
+buffa-build = "0.2.0"
+connectrpc-build = "0.2.0"

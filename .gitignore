@@ -1,0 +1,68 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+/debug/
+/release/
+Cargo.lock
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# PID files
+*.pid
+
+# SQLx offline cache
+.sqlx/
+
+# Generated proto files
+src/gen/
+proto/gen/
+*.pb.go
+*.pb.rs
+
+# Docker
+docker-compose.override.yml
+
+# Test coverage
+*.profraw
+*.profdata
+coverage/
+
+# Benchmark results
+criterion/
+
+# Rust Analyzer
+.rust-analyzer/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
