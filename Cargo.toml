@@ -22,6 +22,9 @@ sqlx = { workspace = true, features = [
     "migrate",
 ] }
 
+# Cache / Messaging
+redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }

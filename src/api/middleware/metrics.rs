@@ -120,6 +120,18 @@ pub fn record_api_key_validation(success: bool, duration_ms: f64) {
     histogram!("iam_api_key_validation_duration_ms").record(duration_ms);
 }
 
+/// Records Redis operation metrics
+pub fn record_redis_operation(operation: &str, success: bool, duration_ms: f64) {
+    counter!("iam_redis_operations_total",
+        "operation" => operation.to_string(),
+        "success" => success.to_string()
+    ).increment(1);
+
+    histogram!("iam_redis_operation_duration_ms",
+        "operation" => operation.to_string()
+    ).record(duration_ms);
+}
+
 /// Records active sessions count
 pub fn record_active_sessions(count: u64) {
     metrics::gauge!("iam_active_sessions").set(count as f64);

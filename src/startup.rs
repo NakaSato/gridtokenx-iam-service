@@ -14,6 +14,8 @@ use crate::api::middleware::otel_tracing;
 use crate::core::config::Config;
 use anyhow::Context as _;
 use crate::domain::identity::{JwtService, ApiKeyService};
+use crate::infra::cache::CacheService;
+use crate::infra::event_bus::EventBus;
 use crate::services::AuthService;
 
 pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()> {
@@ -32,7 +34,16 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         .context("Failed to run database migrations")?;
     info!("✅ Database migrations completed");
 
-    // 2. Initialize Services
+    // 2. Initialize Redis services
+    let cache_service = CacheService::new(&config.redis_url)
+        .await
+        .context("Failed to initialize Redis cache service")?;
+
+    let event_bus = EventBus::new(&config.redis_url)
+        .await
+        .context("Failed to initialize Redis event bus")?;
+
+    // 3. Initialize Auth Services
     let jwt_service = JwtService::new().context("Failed to initialize JWT service")?;
     let api_key_service = ApiKeyService::new().context("Failed to initialize API Key service")?;
     let auth_service = AuthService::new(
@@ -40,9 +51,11 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         Arc::new(config.clone()),
         jwt_service.clone(),
         api_key_service,
+        cache_service.clone(),
+        event_bus.clone(),
     );
 
-    // 3. Build REST Router with metrics and OTel tracing middleware
+    // 4. Build REST Router with metrics and OTel tracing middleware
     let app = Router::new()
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/token", post(login))
@@ -53,12 +66,12 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         .layer(middleware::from_fn(metrics::metrics_middleware))
         .with_state(auth_service.clone());
 
-    // 4. Initialize gRPC Service
+    // 5. Initialize gRPC Service
     let grpc_service = IdentityGrpcService::new(auth_service, jwt_service);
     let grpc_router = Arc::new(grpc_service).register(connectrpc::Router::new());
     let grpc_server = Server::new(grpc_router);
 
-    // 5. Start Servers Concurrently
+    // 6. Start Servers Concurrently
     let rest_addr = format!("0.0.0.0:{}", config.port);
     let grpc_port = config.port + 10; // Simple offset for gRPC
     let grpc_addr: std::net::SocketAddr = format!("0.0.0.0:{}", grpc_port)

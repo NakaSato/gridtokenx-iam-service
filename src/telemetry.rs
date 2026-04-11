@@ -1,6 +1,6 @@
 //! OpenTelemetry initialization for GridTokenX services (SigNoz via OTEL Collector).
 //!
-//! Uses the pattern established in api-gateway's telemetry.rs: filter → otel → fmt.
+//! Uses the pattern established in api-services' telemetry.rs: filter → otel → fmt.
 
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider as _;
@@ -130,16 +130,10 @@ pub fn shutdown_telemetry(guard: &TelemetryGuard) {
 }
 
 /// Initialize OpenTelemetry Metrics.
-fn init_metrics(service_name: &str, otlp_endpoint: &str, resource: &Resource) -> Option<SdkMeterProvider> {
-    let mut exporter_builder = MetricExporter::builder()
+fn init_metrics(_service_name: &str, otlp_endpoint: &str, resource: &Resource) -> Option<SdkMeterProvider> {
+    let exporter_builder = MetricExporter::builder()
         .with_tonic()
         .with_endpoint(otlp_endpoint);
-
-    if otlp_endpoint.starts_with("https://") {
-        exporter_builder = exporter_builder.with_tls_config(
-            tonic::transport::ClientTlsConfig::new().with_native_roots()
-        );
-    }
 
     let exporter = exporter_builder.build().map_err(|e| {
         eprintln!("[WARN] OTLP metrics exporter failed: {e}");

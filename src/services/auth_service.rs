@@ -6,6 +6,10 @@ use uuid::Uuid;
 use crate::core::config::Config;
 use crate::core::error::{ApiError, Result};
 use crate::domain::identity::{Claims, JwtService, PasswordService, Role, ApiKeyService};
+use crate::domain::identity::auth::ApiKey;
+use crate::infra::cache::CacheService;
+use crate::infra::event_bus::EventBus;
+use crate::api::middleware::metrics;
 use anyhow::Context as _;
 
 use crate::api::handlers::types::{
@@ -19,9 +23,11 @@ pub struct AuthService {
     config: Arc<Config>,
     jwt_service: JwtService,
     api_key_service: ApiKeyService,
+    cache: CacheService,
+    event_bus: EventBus,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 struct LoginUserRow {
     id: Uuid,
     username: String,
@@ -39,35 +45,66 @@ impl AuthService {
         config: Arc<Config>,
         jwt_service: JwtService,
         api_key_service: ApiKeyService,
+        cache: CacheService,
+        event_bus: EventBus,
     ) -> Self {
         Self {
             db,
             config,
             jwt_service,
             api_key_service,
+            cache,
+            event_bus,
         }
     }
 
     pub async fn login(&self, request: LoginRequest) -> Result<AuthResponse> {
         info!("🔐 Login attempt for: {}", request.username);
 
-        let row = sqlx::query_as::<_, LoginUserRow>(
-            "SELECT id, username, email, password_hash, role::text as role, first_name, last_name, wallet_address 
-             FROM users 
-             WHERE (username = $1 OR email = $1) AND is_active = true 
-             LIMIT 1",
-        )
-        .bind(&request.username)
-        .fetch_optional(&self.db)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error fetching user: {:?}", e);
-            ApiError::Internal(format!("Failed to fetch user during login: {}", e))
-        })?
-        .ok_or_else(|| {
-            info!("User not found: {}", request.username);
-            ApiError::invalid_credentials()
-        })?;
+        // ── Rate limiting via Redis ──────────────────────────────────
+        let lock_key = crate::infra::cache::keys::account_lock(&request.username);
+        if self.cache.exists(&lock_key).await.unwrap_or(false) {
+            info!("Account temporarily locked: {}", request.username);
+            metrics::record_auth_attempt("login", false);
+            return Err(ApiError::RateLimitExceeded(
+                "Account temporarily locked due to too many failed attempts".to_string(),
+            ));
+        }
+
+        // ── Check cache for user profile (skip DB query on cache hit) ──
+        let profile_key = crate::infra::cache::keys::user_profile(&request.username);
+        let cached_user: Option<LoginUserRow> = self.cache.get(&profile_key).await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Cache GET failed (non-critical): {}", e);
+                None
+            });
+
+        let row = if let Some(user) = cached_user {
+            user
+        } else {
+            // Cache miss — query DB
+            let db_row = sqlx::query_as::<_, LoginUserRow>(
+                "SELECT id, username, email, password_hash, role::text as role, first_name, last_name, wallet_address
+                 FROM users
+                 WHERE (username = $1 OR email = $1) AND is_active = true
+                 LIMIT 1",
+            )
+            .bind(&request.username)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| {
+                tracing::error!("Database error fetching user: {:?}", e);
+                ApiError::Internal(format!("Failed to fetch user during login: {}", e))
+            })?
+            .ok_or_else(|| {
+                info!("User not found: {}", request.username);
+                ApiError::invalid_credentials()
+            })?;
+
+            // Cache the user for 5 minutes
+            let _ = self.cache.set(&profile_key, &db_row).await;
+            db_row
+        };
 
         let is_valid = tokio::task::spawn_blocking({
             let pwd = request.password.clone();
@@ -80,11 +117,41 @@ impl AuthService {
 
         if !is_valid {
             info!("Invalid password for user: {}", row.username);
+
+            // ── Track failed attempts in Redis ───────────────────────
+            let attempts_key = crate::infra::cache::keys::login_attempts(&request.username);
+            let attempts = self.cache.increment(&attempts_key).await.unwrap_or(0);
+
+            // Lock account after 5 failed attempts
+            if attempts >= 5 {
+                let lockout_secs = 900; // 15 minutes
+                let _ = self.cache.set_with_ttl(&lock_key, &true, lockout_secs).await;
+                metrics::record_auth_failure("login", "account_locked");
+                return Err(ApiError::RateLimitExceeded(
+                    format!("Account locked for {} seconds due to too many failed attempts", lockout_secs),
+                ));
+            }
+
+            metrics::record_auth_failure("login", "invalid_credentials");
             return Err(ApiError::invalid_credentials());
         }
 
+        // ── Reset failed attempts on successful login ────────────────
+        let attempts_key = crate::infra::cache::keys::login_attempts(&request.username);
+        let _ = self.cache.delete(&attempts_key).await;
+
         let claims = Claims::new(row.id, row.username.clone(), row.role.clone());
         let token = self.jwt_service.encode_token(&claims)?;
+
+        // ── Publish login event to Redis stream ──────────────────────
+        let login_event = crate::infra::event_bus::Event::user_logged_in(
+            &row.id,
+            &row.username,
+            None, // IP not available here
+        );
+        let _ = self.event_bus.publish(&login_event).await;
+
+        metrics::record_auth_attempt("login", true);
 
         Ok(AuthResponse {
             access_token: token,
@@ -115,7 +182,7 @@ impl AuthService {
         // Create user in DB
         let user_id = Uuid::new_v4();
         sqlx::query(
-            "INSERT INTO users (id, username, email, password_hash, role, first_name, last_name, is_active) 
+            "INSERT INTO users (id, username, email, password_hash, role, first_name, last_name, is_active)
              VALUES ($1, $2, $3, $4, $5::text::user_role, $6, $7, true)",
         )
         .bind(user_id)
@@ -130,7 +197,15 @@ impl AuthService {
         .context("Failed to insert user into database (possible duplicate)")
         .map_err(|_| ApiError::Conflict("Username or email already exists".to_string()))?;
 
-            Ok(RegistrationResponse {
+        // ── Publish registration event to Redis stream ───────────────
+        let reg_event = crate::infra::event_bus::Event::user_registered(
+            &user_id,
+            &request.username,
+            &request.email,
+        );
+        let _ = self.event_bus.publish(&reg_event).await;
+
+        Ok(RegistrationResponse {
             id: user_id,
             username: request.username,
             email: request.email,
@@ -151,15 +226,15 @@ impl AuthService {
             return Err(ApiError::BadRequest("Invalid verification token".to_string()));
         };
 
-        // Find user, and update is_active = true. 
+        // Find user, and update is_active = true.
         // If wallet_address is null, we generate a mock one for the test.
         let mock_wallet = format!("BT9ESAZoNGnvPswpeHNLgt582GTQrAUv21ZLkk4H6{}", &Uuid::new_v4().to_string()[..8]);
 
         let row = sqlx::query_as::<_, LoginUserRow>(
-            "UPDATE users 
-             SET is_active = true, 
+            "UPDATE users
+             SET is_active = true,
                  wallet_address = COALESCE(wallet_address, $2)
-             WHERE email = $1 
+             WHERE email = $1
              RETURNING id, username, email, password_hash, role::text as role, first_name, last_name, wallet_address",
         )
         .bind(&email)
@@ -173,6 +248,14 @@ impl AuthService {
         // Generate token
         let claims = Claims::new(row.id, row.username.clone(), row.role.clone());
         let token = self.jwt_service.encode_token(&claims)?;
+
+        // ── Publish email verification event to Redis stream ─────────
+        let verify_event = crate::infra::event_bus::Event::email_verified(
+            &row.id,
+            &row.email,
+            row.wallet_address.as_deref().unwrap_or(""),
+        );
+        let _ = self.event_bus.publish(&verify_event).await;
 
         Ok(VerifyEmailResponse {
             success: true,
@@ -198,6 +281,34 @@ impl AuthService {
 
         let key_hash = self.api_key_service.hash_key(key)?;
 
+        // ── Check cache first ────────────────────────────────────────
+        let cache_key = crate::infra::cache::keys::api_key(&key_hash);
+        let cached: Option<ApiKey> = self.cache.get(&cache_key).await
+            .unwrap_or_else(|e| {
+                tracing::warn!("API key cache GET failed (non-critical): {}", e);
+                None
+            });
+
+        if let Some(api_key) = cached {
+            // Update last_used_at in DB (fire-and-forget)
+            let _ = sqlx::query(
+                "UPDATE api_keys SET last_used_at = NOW() WHERE id = $1",
+            )
+            .bind(api_key.id)
+            .execute(&self.db)
+            .await;
+
+            // Publish event
+            let event = crate::infra::event_bus::Event::api_key_verified(
+                &api_key.name,
+                &api_key.role,
+            );
+            let _ = self.event_bus.publish(&event).await;
+
+            return Ok(api_key);
+        }
+
+        // Cache miss — query DB
         let row = sqlx::query_as::<_, ApiKeyRow>(
             r#"
             SELECT id, key_hash, name, role, permissions, is_active, created_at, last_used_at
@@ -224,16 +335,28 @@ impl AuthService {
         .execute(&self.db)
         .await;
 
-        Ok(ApiKey {
+        let api_key = ApiKey {
             id: row.id,
             key_hash: row.key_hash,
-            name: row.name,
-            role: row.role,
+            name: row.name.clone(),
+            role: row.role.clone(),
             permissions: row.permissions.unwrap_or_default(),
             is_active: row.is_active.unwrap_or(true),
             created_at: row.created_at.unwrap_or_default(),
             last_used_at: Some(Utc::now()),
-        })
+        };
+
+        // ── Cache the API key for 5 minutes ──────────────────────────
+        let _ = self.cache.set(&cache_key, &api_key).await;
+
+        // ── Publish event ────────────────────────────────────────────
+        let event = crate::infra::event_bus::Event::api_key_verified(
+            &api_key.name,
+            &api_key.role,
+        );
+        let _ = self.event_bus.publish(&event).await;
+
+        Ok(api_key)
     }
 }
 
@@ -250,5 +373,4 @@ struct ApiKeyRow {
     last_used_at: Option<DateTime<Utc>>,
 }
 
-use crate::domain::identity::auth::ApiKey;
 use chrono::{DateTime, Utc};

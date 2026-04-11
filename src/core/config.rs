@@ -25,8 +25,9 @@ impl Config {
             port: env::var("IAM_PORT")
                 .unwrap_or_else(|_| "8081".to_string())
                 .parse()?,
-            database_url: env::var("DATABASE_URL")
-                .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?,
+            database_url: env::var("IAM_DATABASE_URL")
+                .or_else(|_| env::var("DATABASE_URL"))
+                .map_err(|_| anyhow::anyhow!("IAM_DATABASE_URL or DATABASE_URL is required"))?,
             redis_url: env::var("REDIS_URL")
                 .map_err(|_| anyhow::anyhow!("REDIS_URL is required"))?,
             jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| "supersecretjwtkey".to_string()),
