@@ -1,0 +1,21 @@
+[package]
+name = "iam-protocol"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+iam-core.workspace = true
+serde.workspace = true
+connectrpc.workspace = true
+buffa.workspace = true
+tokio.workspace = true
+futures.workspace = true
+http.workspace = true
+http-body.workspace = true
+
+[build-dependencies]
+connectrpc-build.workspace = true
+buffa-build.workspace = true

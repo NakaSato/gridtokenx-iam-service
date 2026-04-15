@@ -1,0 +1,29 @@
+[package]
+name = "iam-api"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+iam-core.workspace = true
+iam-logic.workspace = true
+iam-protocol.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+connectrpc.workspace = true
+buffa.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+utoipa.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+gridtokenx-blockchain-core.workspace = true

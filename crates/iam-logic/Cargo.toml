@@ -1,0 +1,34 @@
+[package]
+name = "iam-logic"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+iam-core.workspace = true
+iam-persistence.workspace = true
+iam-protocol.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+redis.workspace = true
+rdkafka.workspace = true
+lapin.workspace = true
+jsonwebtoken.workspace = true
+bcrypt.workspace = true
+argon2.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+lettre.workspace = true
+rustls.workspace = true
+solana-sdk.workspace = true
+gridtokenx-blockchain-core.workspace = true
+rand.workspace = true
+bs58.workspace = true
+sha2.workspace = true

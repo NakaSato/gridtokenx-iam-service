@@ -1,0 +1,13 @@
+-- Add missing telemetry columns to meter_readings table
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS temperature DOUBLE PRECISION;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS thd_voltage DOUBLE PRECISION;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS thd_current DOUBLE PRECISION;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS battery_level DOUBLE PRECISION;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS weather_condition TEXT;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS health_score DOUBLE PRECISION DEFAULT 100.0;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS rec_eligible BOOLEAN DEFAULT FALSE;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS carbon_offset DOUBLE PRECISION;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS max_sell_price DOUBLE PRECISION;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS max_buy_price DOUBLE PRECISION;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS meter_signature TEXT;
+ALTER TABLE meter_readings ADD COLUMN IF NOT EXISTS meter_type TEXT;

@@ -1,76 +1,110 @@
-[package]
-name = "gridtokenx-iam-service"
-version = "0.1.0"
+[workspace]
+resolver = "2"
+members = [
+    "crates/iam-core",
+    "crates/iam-protocol",
+    "crates/iam-persistence",
+    "crates/iam-logic",
+    "crates/iam-api",
+    "crates/iam-server",
+]
+
+[workspace.package]
+version = "0.1.1"
 edition = "2024"
 
-[dependencies]
-# Web Framework
-axum = { workspace = true }
-tower = { workspace = true }
-tower-http = { workspace = true, features = ["cors", "trace", "timeout"] }
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
 
-# Async Runtime
-tokio = { workspace = true }
-futures = { workspace = true }
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
 
-# Database
-sqlx = { workspace = true, features = [
+[workspace.dependencies]
+# Internal Crates
+iam-core = { path = "crates/iam-core" }
+iam-protocol = { path = "crates/iam-protocol" }
+iam-persistence = { path = "crates/iam-persistence" }
+iam-logic = { path = "crates/iam-logic" }
+iam-api = { path = "crates/iam-api" }
+
+# External Dependencies
+axum = { version = "0.8.7", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6.7", features = ["cors", "trace", "timeout"] }
+
+tokio = { version = "1.48", features = [
+    "rt-multi-thread",
+    "macros",
+    "io-util",
+    "time",
+    "sync",
+    "signal",
+    "parking_lot",
+] }
+futures = "0.3"
+
+sqlx = { version = "0.8", features = [
     "postgres",
     "runtime-tokio-rustls",
     "chrono",
     "uuid",
     "migrate",
+    "macros",
 ] }
 
-# Cache / Messaging
-redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+rdkafka = { version = "0.37", features = ["zstd"] }
+lapin = "2.5"
+futures-util = "0.3"
 
-# Serialization
-serde = { workspace = true }
-serde_json = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
-# Authentication
-jsonwebtoken = { workspace = true, features = ["use_pem", "rust_crypto"] }
-bcrypt = { workspace = true }
-argon2 = { workspace = true }
+jsonwebtoken = { version = "10.0", features = ["use_pem", "rust_crypto"] }
+bcrypt = "0.17"
+argon2 = "0.5"
 
-# Observability
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
-metrics = { workspace = true }
-metrics-exporter-prometheus = { workspace = true }
-regex = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.17"
+regex = "1.10"
 
-# OpenTelemetry (SigNoz integration)
-opentelemetry = { workspace = true }
-opentelemetry-otlp = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-opentelemetry-semantic-conventions = { workspace = true }
-tonic = { workspace = true }
+utoipa = { version = "5.0", features = [
+    "axum_extras",
+    "uuid",
+    "chrono",
+    "decimal",
+] }
 
-# API Documentation
-utoipa = { workspace = true, features = ["axum_extras", "uuid", "chrono"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
+anyhow = "1.0"
+thiserror = "2.0"
+async-trait = "0.1"
+config = "0.15.19"
+dotenvy = "0.15"
+solana-sdk = "2.1.0"
+sha2 = "0.10"
+rand = "0.8"
+bs58 = "0.5"
+lettre = { version = "0.11", default-features = false, features = [
+    "smtp-transport",
+    "tokio1-rustls-tls",
+    "builder",
+] }
+rustls = { version = "0.23", features = ["ring"] }
+gridtokenx-blockchain-core = { path = "../gridtokenx-blockchain-core" }
 
-# Utilities
-chrono = { workspace = true }
-uuid = { workspace = true }
-anyhow = { workspace = true }
-thiserror = { workspace = true }
-config = { workspace = true }
-dotenvy = { workspace = true }
-sha2 = { workspace = true }
-rand = { workspace = true }
-
-
-# gRPC
-connectrpc = { workspace = true }
+connectrpc = { version = "0.2.1", features = ["axum", "server", "client"] }
 buffa = "0.2.0"
 http-body = "1.0.0"
 http = "1.0.0"
 tokio-util = "0.7.18"
 rust_decimal = { version = "1.36.0", features = ["serde-float", "maths"] }
 
-[build-dependencies]
+# Build dependencies
 buffa-build = "0.2.0"
 connectrpc-build = "0.2.0"

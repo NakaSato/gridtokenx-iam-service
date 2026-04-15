@@ -52,8 +52,8 @@ WORKDIR /app
 # Copy binary from builder stage
 COPY --from=builder /app/target/release/gridtokenx-iam-service /app/iam-service
 
-# Expose ports (REST: 8080, gRPC: 8090)
-EXPOSE 8080 8090
+# Expose ports (HTTP: 4010, gRPC: 5010)
+EXPOSE 4010 5010
 
 # Run the binary
 ENTRYPOINT ["/app/iam-service"]
