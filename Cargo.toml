@@ -6,7 +6,7 @@ members = [
     "crates/iam-persistence",
     "crates/iam-logic",
     "crates/iam-api",
-    "crates/iam-server",
+    "bin/iam-service",
 ]
 
 [workspace.package]
