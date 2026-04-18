@@ -42,6 +42,10 @@ impl ApiKeyRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    pub fn get_pool(&self) -> &PgPool {
+        &self.pool
+    }
 }
 
 #[async_trait]

@@ -24,6 +24,12 @@ pub struct Config {
     pub smtp_port: u16,
     pub smtp_from: String,
     pub app_base_url: String,
+    pub grpc_port: Option<u16>,
+    pub registry_program_id: String,
+    pub oracle_program_id: String,
+    pub governance_program_id: String,
+    pub energy_token_program_id: String,
+    pub trading_program_id: String,
 }
 
 impl Config {
@@ -67,6 +73,17 @@ impl Config {
             smtp_port: env::var("SMTP_PORT").unwrap_or_else(|_| "1025".to_string()).parse()?,
             smtp_from: env::var("SMTP_FROM").unwrap_or_else(|_| "noreply@gridtokenx.local".to_string()),
             app_base_url: env::var("APP_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string()),
+            grpc_port: env::var("IAM_GRPC_PORT").ok().and_then(|p| p.parse().ok()),
+            registry_program_id: env::var("SOLANA_REGISTRY_PROGRAM_ID")
+                .unwrap_or_else(|_| "C8RT8L5pZCVDrf9v94CNNk3XPBKZU5p4o4aPnAVQGiTu".to_string()),
+            oracle_program_id: env::var("SOLANA_ORACLE_PROGRAM_ID")
+                .unwrap_or_else(|_| "DdeZQdfv7qtnhHktPt8CevKrW6BvjbgKknkD7c63C9hP".to_string()),
+            governance_program_id: env::var("SOLANA_GOVERNANCE_PROGRAM_ID")
+                .unwrap_or_else(|_| "AMowMcC3gVkEvZ3vaskGC4L9uTsBvTxcD4ewEA1TyrK4".to_string()),
+            energy_token_program_id: env::var("SOLANA_ENERGY_TOKEN_PROGRAM_ID")
+                .unwrap_or_else(|_| "6ZoMJypt2vufxeUarFJRZxAvRfUsf7gRHZ1pRQTYerNp".to_string()),
+            trading_program_id: env::var("SOLANA_TRADING_PROGRAM_ID")
+                .unwrap_or_else(|_| "ctBDmdW3VHqqQF7HyEKwoMWszyNcKBNNFsofem3JEup".to_string()),
         })
     }
 }

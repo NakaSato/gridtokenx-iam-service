@@ -10,7 +10,7 @@ use iam_core::domain::identity::{Claims, Role, AuthResult, RegistrationResult, V
 use iam_core::domain::identity::{User, UserWallet, UserType, UserWithHash};
 use iam_core::traits::{
     UserRepositoryTrait, WalletRepositoryTrait, ApiKeyRepositoryTrait,
-    CacheTrait, EmailTrait, EventBusTrait
+    CacheTrait, EmailTrait, EventBusTrait, BlockchainTrait
 };
 use iam_core::domain::identity::Event;
 
@@ -25,8 +25,8 @@ pub struct AuthService {
     pub cache: Arc<dyn CacheTrait>,
     event_bus: Arc<dyn EventBusTrait>,
     email_service: Arc<dyn EmailTrait>,
-    blockchain_service: Arc<gridtokenx_blockchain_core::BlockchainService>,
-    wallet_service: Arc<gridtokenx_blockchain_core::WalletService>,
+    pub blockchain_service: Arc<dyn BlockchainTrait>,
+    pub wallet_service: Arc<gridtokenx_blockchain_core::WalletService>,
 }
 
 impl AuthService {
@@ -40,7 +40,7 @@ impl AuthService {
         cache: Arc<dyn CacheTrait>,
         event_bus: Arc<dyn EventBusTrait>,
         email_service: Arc<dyn EmailTrait>,
-        blockchain_service: Arc<gridtokenx_blockchain_core::BlockchainService>,
+        blockchain_service: Arc<dyn BlockchainTrait>,
         wallet_service: Arc<gridtokenx_blockchain_core::WalletService>,
     ) -> Self {
         Self {
@@ -58,6 +58,12 @@ impl AuthService {
         }
     }
 
+    pub fn jwt_service(&self) -> &JwtService {
+        &self.jwt_service
+    }
+}
+
+impl AuthService {
     pub async fn login(&self, username: String, password: String) -> Result<AuthResult> {
         info!("🔐 Login attempt for: {}", username);
 
@@ -65,7 +71,8 @@ impl AuthService {
         let lock_key = iam_core::domain::identity::keys::cache::account_lock(&username);
         if self.cache.exists(&lock_key).await.unwrap_or(false) {
             info!("Account temporarily locked: {}", username);
-            return Err(ApiError::RateLimitExceeded(
+            return Err(ApiError::with_code(
+                iam_core::error::ErrorCode::AccountLocked,
                 "Account temporarily locked due to too many failed attempts".to_string(),
             ));
         }
@@ -113,7 +120,8 @@ impl AuthService {
             if attempts >= 5 {
                 let lockout_secs = 900; // 15 minutes
                 let _ = self.cache_set(&lock_key, &true, Some(lockout_secs)).await;
-                return Err(ApiError::RateLimitExceeded(
+                return Err(ApiError::with_code(
+                    iam_core::error::ErrorCode::AccountLocked,
                     format!("Account locked for {} seconds due to too many failed attempts", lockout_secs),
                 ));
             }
@@ -157,6 +165,11 @@ impl AuthService {
     ) -> Result<RegistrationResult> {
         info!("📝 Registration attempt for: {}", username);
 
+        // Simple email validation
+        if !email.contains('@') || email.len() < 5 {
+            return Err(ApiError::with_code(iam_core::error::ErrorCode::InvalidEmail, "Invalid email format"));
+        }
+
         let password_hash = tokio::task::spawn_blocking::<_, Result<String>>({
             let pwd = password.clone();
             move || PasswordService::hash_password(&pwd)
@@ -166,6 +179,8 @@ impl AuthService {
         .map_err(|e| e)?;
 
         let user_id = Uuid::new_v4();
+        let verification_token = Uuid::new_v4().to_string();
+
         self.user_repo.create(
             user_id,
             &username,
@@ -174,6 +189,7 @@ impl AuthService {
             &Role::User.to_string(),
             first_name.as_deref(),
             last_name.as_deref(),
+            Some(&verification_token),
         ).await
         .map_err(|e| {
             if let ApiError::Database(sqlx::Error::Database(db_err)) = &e {
@@ -194,7 +210,7 @@ impl AuthService {
             email,
             first_name,
             last_name,
-            message: "User registered successfully".to_string(),
+            message: "User registered successfully. Please verify your email.".to_string(),
         })
     }
 
@@ -204,10 +220,17 @@ impl AuthService {
         let email = if token.starts_with("verify_") {
             token.trim_start_matches("verify_").to_string()
         } else {
-            return Err(ApiError::BadRequest("Invalid verification token".to_string()));
+            self.user_repo.find_email_by_token(&token).await?
+                .ok_or_else(|| ApiError::BadRequest("Invalid or expired verification token".to_string()))?
         };
 
-        let mock_wallet = format!("BT9ESAZoNGnvPswpeHNLgt582GTQrAUv21ZLkk4H6{}", &Uuid::new_v4().to_string()[..8]);
+        let mut mock_wallet = "GtuQNK2t3B1xW95hUzr5NZ7XiWMpQTNxuApMPPKK9peT".to_string();
+        // Use a simple timestamp-based suffix that avoids invalid Base58 characters (0, O, I, l)
+        let suffix: String = uuid::Uuid::new_v4().to_string()[..8]
+            .chars()
+            .map(|c| if "0OI1".contains(c) { 'A' } else { c })
+            .collect();
+        mock_wallet.replace_range(36.., &suffix);
 
         let user = self.user_repo.verify_email(&email, &mock_wallet).await?
             .ok_or_else(|| ApiError::NotFound("User not found".to_string()))?;
@@ -224,10 +247,21 @@ impl AuthService {
         );
         let _ = self.event_bus.publish(&verify_event).await;
 
+        // Ensure wallet is in user_wallets table as primary
+        if let Some(addr) = &user.wallet_address {
+            let _ = self.wallet_repo.insert(user.id, addr, Some("Primary Wallet"), true).await;
+        }
+
+        // Invalidate cache
+        let profile_key_email = iam_core::domain::identity::keys::cache::user_profile(&user.email);
+        let profile_key_user = iam_core::domain::identity::keys::cache::user_profile(&user.username);
+        let _ = self.cache.delete(&profile_key_email).await;
+        let _ = self.cache.delete(&profile_key_user).await;
+
         Ok(VerifyEmailResult {
             success: true,
             message: "Email verified successfully".to_string(),
-            wallet_address: user.wallet_address,
+            wallet_address: user.wallet_address.clone(),
             auth: Some(AuthResult {
                 access_token: auth_token,
                 expires_in: self.config.jwt_expiration,
@@ -238,8 +272,12 @@ impl AuthService {
                     role: user.role,
                     first_name: user.first_name,
                     last_name: user.last_name,
-                    wallet_address: None,
+                    wallet_address: user.wallet_address,
                     is_active: true,
+                    blockchain_registered: user.blockchain_registered,
+                    user_type: user.user_type,
+                    latitude: user.latitude,
+                    longitude: user.longitude,
                 },
             }),
         })
@@ -340,7 +378,47 @@ impl AuthService {
             self.wallet_repo.clear_primary(user_id).await?;
         }
 
-        self.wallet_repo.insert(user_id, &wallet_address, label.as_deref(), is_primary).await
+        let mut wallet = self.wallet_repo.insert(user_id, &wallet_address, label.as_deref(), is_primary).await?;
+
+        // ── Auto On-Chain Registration ─────────────────────────────
+        // If the user is already onboarded on-chain, register this new wallet automatically
+        if let Ok(Some(user)) = self.user_repo.find_by_id(user_id).await {
+            if user.blockchain_registered {
+                info!("🔗 User {} is already onboarded. Auto-registering new wallet: {}", user_id, wallet_address);
+                
+                let pubkey = gridtokenx_blockchain_core::BlockchainService::parse_pubkey(&wallet_address)
+                    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+                let user_type = user.user_type.unwrap_or(UserType::Consumer);
+                let blockchain_user_type = match user_type {
+                    UserType::Prosumer => gridtokenx_blockchain_core::rpc::instructions::UserType::Prosumer,
+                    UserType::Consumer => gridtokenx_blockchain_core::rpc::instructions::UserType::Consumer,
+                };
+
+                let lat = user.latitude.unwrap_or(0.0) as i32;
+                let long = user.longitude.unwrap_or(0.0) as i32;
+
+                // Register on-chain
+                if let Ok(sig) = self.blockchain_service.register_user_on_chain(pubkey, blockchain_user_type, lat, long, 0, 0).await {
+                    let sig_str = sig.to_string();
+                    let _ = self.wallet_repo.mark_registered(user_id, &wallet_address, &sig_str).await;
+                    
+                    // Update the wallet object to return
+                    wallet.blockchain_registered = true;
+                    wallet.blockchain_tx_signature = Some(sig_str);
+                    
+                    // Derive PDA for return
+                    let program_id: solana_sdk::pubkey::Pubkey = self.config.registry_program_id.parse().expect("Invalid registry program ID");
+                    let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
+                        &[b"user_account", pubkey.as_ref()],
+                        &program_id
+                    );
+                    wallet.user_account_pda = Some(pda.to_string());
+                }
+            }
+        }
+
+        Ok(wallet)
     }
 
     pub async fn onboard_user_on_chain(
@@ -367,11 +445,40 @@ impl AuthService {
         let shard_id = shard_id.unwrap_or(0);
 
         match self.blockchain_service.register_user_on_chain(pubkey, blockchain_user_type, lat_e7, long_e7, h3_index, shard_id).await {
-            Ok(sig) => Ok(OnChainOnboardingResult {
-                success: true,
-                message: "User registered on-chain".to_string(),
-                transaction_signature: Some(sig.to_string()),
-            }),
+            Ok(sig) => {
+                let sig_str = sig.to_string();
+                
+                // 1. Mark user as onboarded (persistence)
+                let user_type_str = match user_type_domain {
+                    UserType::Prosumer => "Prosumer",
+                    UserType::Consumer => "Consumer",
+                };
+
+                // Derive PDA for storage
+                let program_id: solana_sdk::pubkey::Pubkey = self.config.registry_program_id.parse().expect("Invalid registry program ID");
+                let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
+                    &[b"user_account", pubkey.as_ref()],
+                    &program_id
+                );
+
+                let _ = self.user_repo.mark_user_onboarded(
+                    user_id,
+                    user_type_str,
+                    lat_e7 as f64,
+                    long_e7 as f64,
+                    &pda.to_string(),
+                    &sig_str,
+                ).await;
+
+                // 2. Mark this specific wallet as registered
+                let _ = self.wallet_repo.mark_registered(user_id, &wallet_address, &sig_str).await;
+
+                Ok(OnChainOnboardingResult {
+                    success: true,
+                    message: "User registered on-chain".to_string(),
+                    transaction_signature: Some(sig_str),
+                })
+            },
             Err(e) => Ok(OnChainOnboardingResult {
                 success: false,
                 message: e.to_string(),
@@ -407,6 +514,9 @@ impl AuthService {
 
         let email = email.ok_or_else(|| ApiError::BadRequest("Invalid or expired reset token".to_string()))?;
 
+        // Get user to find the username for cache invalidation
+        let user_opt = self.user_repo.find_by_username_or_email(&email).await?;
+
         let password_hash = tokio::task::spawn_blocking::<_, Result<String>>({
             let pwd = new_password.to_string();
             move || PasswordService::hash_password(&pwd)
@@ -419,6 +529,15 @@ impl AuthService {
 
         if rows == 0 {
             return Err(ApiError::NotFound("User not found".to_string()));
+        }
+
+        // Invalidate cache for both email and username
+        let profile_key_email = iam_core::domain::identity::keys::cache::user_profile(&email);
+        let _ = self.cache.delete(&profile_key_email).await;
+        
+        if let Some(user_with_hash) = user_opt {
+            let profile_key_user = iam_core::domain::identity::keys::cache::user_profile(&user_with_hash.user.username);
+            let _ = self.cache.delete(&profile_key_user).await;
         }
 
         // Invalidate token

@@ -22,3 +22,8 @@ uuid.workspace = true
 rdkafka.workspace = true
 lapin.workspace = true
 lettre.workspace = true
+
+[dev-dependencies]
+sqlx = { workspace = true, features = ["migrate"] }
+rstest.workspace = true
+tokio-test.workspace = true

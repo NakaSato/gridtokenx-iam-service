@@ -1,5 +1,5 @@
 # Phase 3: IAM Service Dockerfile Alignment
-FROM rust:1.88-bookworm AS builder
+FROM rust:1.89-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -15,17 +15,13 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy the workspace manifest and lockfile
-COPY gridtokenx-iam-service/Cargo.toml ./
-COPY gridtokenx-iam-service/Cargo.lock ./
+# Copy the whole project to maintain structure for sqlx migrations
+COPY gridtokenx-iam-service/ gridtokenx-iam-service/
+COPY gridtokenx-blockchain-core/ gridtokenx-blockchain-core/
 
-# Copy all workspace members
-COPY gridtokenx-iam-service/crates crates/
-COPY gridtokenx-iam-service/bin bin/
-COPY gridtokenx-iam-service/proto proto/
+WORKDIR /app/gridtokenx-iam-service
 
 # Build in release mode
-# Use the workspace bin name
 RUN cargo build --release --bin gridtokenx-iam-service
 
 # -----------------------------------------------------------------------------
@@ -48,16 +44,16 @@ RUN groupadd -g 1000 appgroup && \
 WORKDIR /app
 
 # Copy binary from builder stage
-# Binaries are in target/release/
-COPY --from=builder /app/target/release/gridtokenx-iam-service /app/iam-service
+COPY --from=builder /app/gridtokenx-iam-service/target/release/gridtokenx-iam-service /app/iam-service
+COPY --from=builder /app/gridtokenx-iam-service/migrations /app/migrations
 
 # Ensure appuser owns the binary
-RUN chown appuser:appgroup /app/iam-service
+RUN chown -R appuser:appgroup /app
 
 # Use non-root user
 USER appuser
 
-# Expose ports (HTTP: 8080, gRPC: 8090 - based on docker-compose mapping)
+# Expose ports (HTTP: 8080, gRPC: 8090)
 EXPOSE 8080 8090
 
 # Run the binary

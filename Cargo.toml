@@ -105,6 +105,12 @@ http = "1.0.0"
 tokio-util = "0.7.18"
 rust_decimal = { version = "1.36.0", features = ["serde-float", "maths"] }
 
+# Test Dependencies
+mockall = "0.13"
+rstest = "0.23"
+tokio-test = "0.4"
+axum-test = "16.4.0"
+
 # Build dependencies
 buffa-build = "0.2.0"
 connectrpc-build = "0.2.0"

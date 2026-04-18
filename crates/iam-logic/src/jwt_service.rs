@@ -13,13 +13,7 @@ pub struct JwtService {
 }
 
 impl JwtService {
-    pub fn new() -> Result<Self> {
-        use anyhow::Context;
-        
-        let secret = env::var("JWT_SECRET")
-            .context("JWT_SECRET environment variable not set")
-            .map_err(ApiError::from)?;
-
+    pub fn new(secret: &str) -> Result<Self> {
         let encoding_key = EncodingKey::from_secret(secret.as_ref());
         let decoding_key = DecodingKey::from_secret(secret.as_ref());
 
@@ -47,13 +41,13 @@ impl JwtService {
             .map_err(|e| {
                 match e.kind() {
                     jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
-                        ApiError::Unauthorized("Token has expired".to_string())
+                        ApiError::with_code(iam_core::error::ErrorCode::TokenExpired, "Token has expired")
                     }
                     jsonwebtoken::errors::ErrorKind::InvalidToken => {
-                        ApiError::Unauthorized("Invalid token".to_string())
+                        ApiError::with_code(iam_core::error::ErrorCode::TokenInvalid, "Invalid token")
                     }
                     jsonwebtoken::errors::ErrorKind::InvalidSignature => {
-                        ApiError::Unauthorized("Invalid token signature".to_string())
+                        ApiError::with_code(iam_core::error::ErrorCode::TokenInvalid, "Invalid token signature")
                     }
                     _ => ApiError::Internal(format!("JWT decode error: {}", e)),
                 }
@@ -85,11 +79,7 @@ pub struct ApiKeyService {
 }
 
 impl ApiKeyService {
-    pub fn new() -> Result<Self> {
-        let secret = env::var("API_KEY_SECRET").map_err(|_| {
-            ApiError::Internal("API_KEY_SECRET environment variable not set".to_string())
-        })?;
-
+    pub fn new(secret: String) -> Result<Self> {
         Ok(Self { secret })
     }
 
@@ -122,17 +112,13 @@ mod tests {
     use iam_core::domain::identity::Role;
     use chrono::Utc;
 
-    fn setup_env() {
-        unsafe {
-            std::env::set_var("JWT_SECRET", "test-secret-12345678901234567890");
-            std::env::set_var("API_KEY_SECRET", "test-api-key-secret");
-        }
-    }
+    // Environmental set_var is unsafe in modern Rust and discouraged in tests.
+    // Instead, we pass secrets directly to the constructors.
 
     #[test]
     fn test_jwt_lifecycle() {
-        setup_env();
-        let service = JwtService::new().unwrap();
+        let secret = "test-secret-12345678901234567890";
+        let service = JwtService::new(secret).unwrap();
         let user_id = Uuid::new_v4();
         let claims = Claims::new(user_id, "testuser".to_string(), Role::User.to_string());
 
@@ -152,8 +138,8 @@ mod tests {
 
     #[test]
     fn test_jwt_expiration() {
-        setup_env();
-        let service = JwtService::new().unwrap();
+        let secret = "test-secret-12345678901234567890";
+        let service = JwtService::new(secret).unwrap();
         let user_id = Uuid::new_v4();
         
         // Create expired claims
@@ -172,8 +158,8 @@ mod tests {
 
     #[test]
     fn test_jwt_refresh() {
-        setup_env();
-        let service = JwtService::new().unwrap();
+        let secret = "test-secret-12345678901234567890";
+        let service = JwtService::new(secret).unwrap();
         let user_id = Uuid::new_v4();
         let claims = Claims::new(user_id, "testuser".to_string(), Role::User.to_string());
         let token = service.encode_token(&claims).unwrap();
@@ -188,8 +174,8 @@ mod tests {
 
     #[test]
     fn test_api_key_lifecycle() {
-        setup_env();
-        let service = ApiKeyService::new().unwrap();
+        let secret = "test-api-key-secret".to_string();
+        let service = ApiKeyService::new(secret).unwrap();
         
         let (key, hash) = service.generate_key("test-key", vec!["read".to_string()]).unwrap();
         assert!(key.starts_with("ak_"));

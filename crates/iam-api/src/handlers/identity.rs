@@ -96,6 +96,12 @@ pub async fn link_wallet(
         request.is_primary,
     ).await?;
 
+    let message = if w.blockchain_registered {
+        "Wallet linked and registered on-chain successfully".to_string()
+    } else {
+        "Wallet linked successfully".to_string()
+    };
+
     Ok(Json(LinkWalletResponse {
         wallet: UserWallet {
             id: w.id, user_id: w.user_id, wallet_address: w.wallet_address,
@@ -104,7 +110,7 @@ pub async fn link_wallet(
             shard_id: w.shard_id, blockchain_tx_signature: w.blockchain_tx_signature,
             created_at: w.created_at,
         },
-        message: "Wallet linked successfully".to_string(),
+        message,
     }))
 }
 

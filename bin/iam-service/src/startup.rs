@@ -67,19 +67,29 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
     );
 
     // 4. Initialize Auth Services
-    let jwt_service = JwtService::new().context("Failed to initialize JWT service")?;
-    let api_key_service = ApiKeyService::new().context("Failed to initialize API Key service")?;
+    let jwt_service = JwtService::new(&config.jwt_secret).context("Failed to initialize JWT service")?;
+    let api_key_service = ApiKeyService::new(config.api_key_secret.clone()).context("Failed to initialize API Key service")?;
 
     // Blockchain Core Integration
+    let programs_config = gridtokenx_blockchain_core::SolanaProgramsConfig {
+        registry_program_id: config.registry_program_id.clone(),
+        oracle_program_id: config.oracle_program_id.clone(),
+        governance_program_id: config.governance_program_id.clone(),
+        energy_token_program_id: config.energy_token_program_id.clone(),
+        trading_program_id: config.trading_program_id.clone(),
+    };
+
     let blockchain_service = Arc::new(gridtokenx_blockchain_core::BlockchainService::new(
         config.chain_bridge_url.clone(),
         config.solana_cluster.clone(),
-        gridtokenx_blockchain_core::SolanaProgramsConfig::default(),
+        programs_config,
         Arc::new(gridtokenx_blockchain_core::NoopMetrics),
     ).await.context("Failed to initialize Blockchain Service")?);
 
+    let blockchain_provider = Arc::new(iam_logic::blockchain_provider::BlockchainProvider::new(blockchain_service.clone()));
+
     let wallet_service = Arc::new(gridtokenx_blockchain_core::WalletService::new(
-        &config.solana_rpc_url,
+        blockchain_service.transaction_handler.clone(),
     ));
 
     let email_service: Arc<dyn EmailTrait> = Arc::new(
@@ -97,7 +107,7 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         cache_service,
         event_bus,
         email_service,
-        blockchain_service,
+        blockchain_provider,
         wallet_service,
     );
 
@@ -112,9 +122,9 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         .route("/api/v1/identity/onboard", post(iam_api::handlers::identity::onboard_user))
         .route("/api/v1/identity/wallets", post(iam_api::handlers::identity::link_wallet))
         .route("/api/v1/identity/wallets", axum::routing::get(iam_api::handlers::identity::list_wallets))
-        .route("/api/v1/identity/wallets/:wallet_id", axum::routing::get(iam_api::handlers::identity::get_wallet))
-        .route("/api/v1/identity/wallets/:wallet_id", axum::routing::delete(iam_api::handlers::identity::unlink_wallet))
-        .route("/api/v1/identity/wallets/:wallet_id/primary", axum::routing::put(iam_api::handlers::identity::set_primary_wallet))
+        .route("/api/v1/identity/wallets/{wallet_id}", axum::routing::get(iam_api::handlers::identity::get_wallet))
+        .route("/api/v1/identity/wallets/{wallet_id}", axum::routing::delete(iam_api::handlers::identity::unlink_wallet))
+        .route("/api/v1/identity/wallets/{wallet_id}/primary", axum::routing::put(iam_api::handlers::identity::set_primary_wallet))
         .route("/metrics", axum::routing::get(get_metrics))
         .route("/health", axum::routing::get(health_check))
         .route("/health/ready", axum::routing::get(health_ready))
@@ -131,7 +141,7 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
 
     // 7. Start Servers Concurrently
     let rest_addr = format!("0.0.0.0:{}", config.port);
-    let grpc_port = config.port + 10;
+    let grpc_port = config.grpc_port.unwrap_or(config.port + 10);
     let grpc_addr: std::net::SocketAddr = format!("0.0.0.0:{}", grpc_port)
         .parse()
         .context("Failed to parse IAM gRPC address")?;

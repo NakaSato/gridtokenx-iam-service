@@ -37,6 +37,10 @@ pub struct User {
     pub last_name: Option<String>,
     pub wallet_address: Option<String>,
     pub is_active: bool,
+    pub blockchain_registered: bool,
+    pub user_type: Option<UserType>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
 }
 
 /// User profile with password hash (internal use).

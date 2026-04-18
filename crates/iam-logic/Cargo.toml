@@ -7,10 +7,11 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-iam-core.workspace = true
+iam-core = { workspace = true, features = ["mocks"] }
 iam-persistence.workspace = true
 iam-protocol.workspace = true
 tokio.workspace = true
+futures.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -28,7 +29,13 @@ uuid.workspace = true
 lettre.workspace = true
 rustls.workspace = true
 solana-sdk.workspace = true
-gridtokenx-blockchain-core.workspace = true
+gridtokenx-blockchain-core = { workspace = true, features = ["mocks"] }
 rand.workspace = true
 bs58.workspace = true
 sha2.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true
+rstest.workspace = true
+tokio-test.workspace = true

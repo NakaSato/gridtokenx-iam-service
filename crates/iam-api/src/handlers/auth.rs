@@ -4,6 +4,8 @@ use crate::handlers::types::{
     UserResponse, ForgotPasswordRequest, ForgotPasswordResponse, ResetPasswordRequest, ResetPasswordResponse,
     AuthenticatedUser,
 };
+#[cfg(test)]
+mod auth_tests;
 use crate::middleware::metrics;
 use iam_core::error::Result as ApiResult;
 use iam_core::domain::identity::Claims;

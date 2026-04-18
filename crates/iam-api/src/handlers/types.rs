@@ -11,13 +11,11 @@ use iam_logic::JwtService;
 
 pub struct AuthenticatedUser(pub Claims);
 
-impl<S> FromRequestParts<S> for AuthenticatedUser
-where
-    S: Send + Sync,
+impl FromRequestParts<iam_logic::AuthService> for AuthenticatedUser
 {
     type Rejection = ApiError;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> ApiResult<Self> {
+    async fn from_request_parts(parts: &mut Parts, state: &iam_logic::AuthService) -> ApiResult<Self> {
         let auth_header = parts.headers
             .get("Authorization")
             .and_then(|h| h.to_str().ok())
@@ -28,7 +26,8 @@ where
         }
 
         let token = &auth_header[7..];
-        let jwt_service = JwtService::new()?; 
+        
+        let jwt_service: &iam_logic::JwtService = state.jwt_service();
         
         let claims = jwt_service.decode_token(token).map_err(|e| {
             tracing::error!("Token decoding failed: {}", e);
@@ -39,7 +38,7 @@ where
     }
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
@@ -63,7 +62,7 @@ pub struct UserResponse {
     pub wallet_address: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RegistrationRequest {
     pub username: String,
     pub email: String,

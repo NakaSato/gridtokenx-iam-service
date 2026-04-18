@@ -26,4 +26,18 @@ anyhow.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
-gridtokenx-blockchain-core.workspace = true
+gridtokenx-blockchain-core = { workspace = true, features = ["mocks"] }
+async-trait.workspace = true
+
+[dev-dependencies]
+iam-core = { workspace = true, features = ["mocks"] }
+axum-test.workspace = true
+mockall.workspace = true
+rstest.workspace = true
+tokio-test.workspace = true
+tower.workspace = true
+http.workspace = true
+serde_json.workspace = true
+bytes = "1.11.1"
+http-body-util = "0.1.3"
+bcrypt.workspace = true
