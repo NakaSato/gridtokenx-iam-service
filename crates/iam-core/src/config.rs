@@ -30,6 +30,8 @@ pub struct Config {
     pub governance_program_id: String,
     pub energy_token_program_id: String,
     pub trading_program_id: String,
+    pub auth_cpu_semaphore_limit: usize,
+    pub tokio_worker_threads: Option<usize>,
 }
 
 impl Config {
@@ -84,6 +86,12 @@ impl Config {
                 .unwrap_or_else(|_| "6ZoMJypt2vufxeUarFJRZxAvRfUsf7gRHZ1pRQTYerNp".to_string()),
             trading_program_id: env::var("SOLANA_TRADING_PROGRAM_ID")
                 .unwrap_or_else(|_| "ctBDmdW3VHqqQF7HyEKwoMWszyNcKBNNFsofem3JEup".to_string()),
+            auth_cpu_semaphore_limit: env::var("AUTH_CPU_SEMAPHORE_LIMIT")
+                .unwrap_or_else(|_| "32".to_string())
+                .parse()?,
+            tokio_worker_threads: env::var("TOKIO_WORKER_THREADS")
+                .ok()
+                .and_then(|v| v.parse().ok()),
         })
     }
 }

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tracing::info;
 use uuid::Uuid;
 
@@ -27,6 +28,8 @@ pub struct AuthService {
     email_service: Arc<dyn EmailTrait>,
     pub blockchain_service: Arc<dyn BlockchainTrait>,
     pub wallet_service: Arc<gridtokenx_blockchain_core::WalletService>,
+    /// Semaphore to limit concurrent CPU-bound tasks (e.g. password hashing)
+    cpu_semaphore: Arc<Semaphore>,
 }
 
 impl AuthService {
@@ -43,6 +46,7 @@ impl AuthService {
         blockchain_service: Arc<dyn BlockchainTrait>,
         wallet_service: Arc<gridtokenx_blockchain_core::WalletService>,
     ) -> Self {
+        let cpu_semaphore = Arc::new(Semaphore::new(config.auth_cpu_semaphore_limit));
         Self {
             user_repo,
             wallet_repo,
@@ -55,6 +59,7 @@ impl AuthService {
             email_service,
             blockchain_service,
             wallet_service,
+            cpu_semaphore,
         }
     }
 
@@ -71,6 +76,10 @@ impl AuthService {
         let lock_key = iam_core::domain::identity::keys::cache::account_lock(&username);
         if self.cache.exists(&lock_key).await.unwrap_or(false) {
             info!("Account temporarily locked: {}", username);
+            
+            // Publish attempt event
+            let _ = self.event_bus.publish(&Event::login_attempt(&username, false, None)).await;
+            
             return Err(ApiError::with_code(
                 iam_core::error::ErrorCode::AccountLocked,
                 "Account temporarily locked due to too many failed attempts".to_string(),
@@ -100,6 +109,14 @@ impl AuthService {
             db_user
         };
 
+        // ── CPU Semaphore for Backpressure ──────────────────────────
+        let wait_start = std::time::Instant::now();
+        let _permit = self.cpu_semaphore.acquire().await
+            .map_err(|e| ApiError::Internal(format!("Failed to acquire CPU permit: {e}")))?;
+        
+        let wait_duration = wait_start.elapsed().as_secs_f64() * 1000.0;
+        metrics::histogram!("iam_auth_cpu_semaphore_wait_duration_ms", "operation" => "login").record(wait_duration);
+
         let is_valid = tokio::task::spawn_blocking::<_, Result<bool>>({
             let pwd = password.clone();
             let hash = user_with_hash.password_hash.clone();
@@ -116,10 +133,17 @@ impl AuthService {
             let attempts_key = iam_core::domain::identity::keys::cache::login_attempts(&username);
             let attempts = self.cache.increment(&attempts_key).await.unwrap_or(0u64);
 
+            // Publish attempt event
+            let _ = self.event_bus.publish(&Event::login_attempt(&username, false, None)).await;
+
             // Lock account after 5 failed attempts
             if attempts >= 5 {
                 let lockout_secs = 900; // 15 minutes
                 let _ = self.cache_set(&lock_key, &true, Some(lockout_secs)).await;
+                
+                // Publish locked event
+                let _ = self.event_bus.publish(&Event::account_locked(&username, lockout_secs)).await;
+                
                 return Err(ApiError::with_code(
                     iam_core::error::ErrorCode::AccountLocked,
                     format!("Account locked for {} seconds due to too many failed attempts", lockout_secs),
@@ -140,13 +164,14 @@ impl AuthService {
         );
         let token = self.jwt_service.encode_token(&claims)?;
 
-        // ── Publish login event ──────────────────────────────────────
+        // ── Publish events ───────────────────────────────────────────
+        let attempt_event = Event::login_attempt(&username, true, None);
         let login_event = Event::user_logged_in(
             &user_with_hash.user.id,
             &user_with_hash.user.username,
             None, // IP not available here
         );
-        let _ = self.event_bus.publish(&login_event).await;
+        let _ = self.event_bus.publish_batch(&[attempt_event, login_event]).await;
 
         Ok(AuthResult {
             access_token: token,
@@ -169,6 +194,14 @@ impl AuthService {
         if !email.contains('@') || email.len() < 5 {
             return Err(ApiError::with_code(iam_core::error::ErrorCode::InvalidEmail, "Invalid email format"));
         }
+
+        // ── CPU Semaphore for Backpressure ──────────────────────────
+        let wait_start = std::time::Instant::now();
+        let _permit = self.cpu_semaphore.acquire().await
+            .map_err(|e| ApiError::Internal(format!("Failed to acquire CPU permit: {e}")))?;
+        
+        let wait_duration = wait_start.elapsed().as_secs_f64() * 1000.0;
+        metrics::histogram!("iam_auth_cpu_semaphore_wait_duration_ms", "operation" => "register").record(wait_duration);
 
         let password_hash = tokio::task::spawn_blocking::<_, Result<String>>({
             let pwd = password.clone();
@@ -405,7 +438,7 @@ impl AuthService {
                     
                     // Update the wallet object to return
                     wallet.blockchain_registered = true;
-                    wallet.blockchain_tx_signature = Some(sig_str);
+                    wallet.blockchain_tx_signature = Some(sig_str.clone());
                     
                     // Derive PDA for return
                     let program_id: solana_sdk::pubkey::Pubkey = self.config.registry_program_id.parse().expect("Invalid registry program ID");
@@ -414,6 +447,16 @@ impl AuthService {
                         &program_id
                     );
                     wallet.user_account_pda = Some(pda.to_string());
+
+                    // ── Publish Event ──────────────────────────────────────────
+                    let linked_event = Event::user_wallet_linked(
+                        &user_id,
+                        &wallet_address,
+                        &pda.to_string(),
+                        &sig_str,
+                        0, // Shard ID not available here
+                    );
+                    let _ = self.event_bus.publish(&linked_event).await;
                 }
             }
         }
@@ -473,6 +516,17 @@ impl AuthService {
                 // 2. Mark this specific wallet as registered
                 let _ = self.wallet_repo.mark_registered(user_id, &wallet_address, &sig_str).await;
 
+                // ── Publish Event ──────────────────────────────────────────
+                let onboard_event = Event::user_onboarded(
+                    &user_id,
+                    &wallet_address,
+                    &pda.to_string(),
+                    &sig_str,
+                    user_type_str,
+                    shard_id,
+                );
+                let _ = self.event_bus.publish(&onboard_event).await;
+
                 Ok(OnChainOnboardingResult {
                     success: true,
                     message: "User registered on-chain".to_string(),
@@ -516,6 +570,14 @@ impl AuthService {
 
         // Get user to find the username for cache invalidation
         let user_opt = self.user_repo.find_by_username_or_email(&email).await?;
+
+        // ── CPU Semaphore for Backpressure ──────────────────────────
+        let wait_start = std::time::Instant::now();
+        let _permit = self.cpu_semaphore.acquire().await
+            .map_err(|e| ApiError::Internal(format!("Failed to acquire CPU permit: {e}")))?;
+        
+        let wait_duration = wait_start.elapsed().as_secs_f64() * 1000.0;
+        metrics::histogram!("iam_auth_cpu_semaphore_wait_duration_ms", "operation" => "reset_password").record(wait_duration);
 
         let password_hash = tokio::task::spawn_blocking::<_, Result<String>>({
             let pwd = new_password.to_string();

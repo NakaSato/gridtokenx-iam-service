@@ -202,4 +202,12 @@ impl UserRepositoryTrait for UserRepository {
 
         Ok(())
     }
+
+    async fn health_check(&self) -> Result<()> {
+        sqlx::query("SELECT 1")
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(ApiError::from)
+    }
 }

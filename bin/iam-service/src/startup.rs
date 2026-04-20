@@ -207,9 +207,16 @@ async fn health_ready(State(auth_service): State<AuthService>) -> impl IntoRespo
     let mut ready = true;
 
     // Check PostgreSQL via user_repo
-    // Note: We'll add a health check if needed, but for now we just want to know if service is alive.
-    // In a real refactor, repositories should probably expose a health check.
-    checks.insert("postgres".to_string(), json!({"status": "ok"}));
+    match auth_service.user_repo.health_check().await {
+        Ok(_) => {
+            checks.insert("postgres".to_string(), json!({"status": "ok"}));
+        }
+        Err(e) => {
+            let err_msg: String = e.to_string();
+            checks.insert("postgres".to_string(), json!({"status": "error", "error": err_msg}));
+            ready = false;
+        }
+    }
 
     // Check Redis
     match auth_service.cache.ping().await {

@@ -137,6 +137,13 @@ pub fn record_active_sessions(count: u64) {
     metrics::gauge!("iam_active_sessions").set(count as f64);
 }
 
+/// Records duration spent waiting for a CPU semaphore permit
+pub fn record_cpu_wait_duration(operation: &str, duration_ms: f64) {
+    histogram!("iam_auth_cpu_semaphore_wait_duration_ms",
+        "operation" => operation.to_string()
+    ).record(duration_ms);
+}
+
 /// Records gRPC request metrics for IAM service
 pub async fn grpc_metrics_middleware(
     req: Request<Body>,

@@ -46,6 +46,8 @@ fn mock_config() -> Arc<Config> {
         governance_program_id: "6FsfuFEg8LHjSiejc8om8Q6iSaAgfEWHCgz78PT8jocw".to_string(),
         energy_token_program_id: "GjSjmPt8VSHr49ti4BijWZSu7rwb8o32pod7gNBnTY4U".to_string(),
         trading_program_id: "DXxHdUar3pUUKRnt4XAMA8rdYRpAsNY1xk3Zo4crShvY".to_string(),
+        auth_cpu_semaphore_limit: 32,
+        grpc_port: Some(4020),
     })
 }
 
@@ -119,7 +121,7 @@ async fn test_login_success() {
         .returning(|_| Box::pin(async move { Ok(()) }));
 
     // 6. Event publish
-    event_bus.expect_publish()
+    event_bus.expect_publish_batch()
         .returning(|_| Box::pin(async move { Ok(()) }));
 
     let wallet_service = mock_wallet_service();

@@ -16,10 +16,14 @@ impl FromRequestParts<iam_logic::AuthService> for AuthenticatedUser
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &iam_logic::AuthService) -> ApiResult<Self> {
+        tracing::info!("📥 [IAM] Request headers: {:?}", parts.headers);
         let auth_header = parts.headers
             .get("Authorization")
             .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".to_string()))?;
+            .ok_or_else(|| {
+                tracing::warn!("⚠️ [IAM] Missing Authorization header in request");
+                ApiError::Unauthorized("Missing Authorization header".to_string())
+            })?;
 
         if !auth_header.starts_with("Bearer ") {
             return Err(ApiError::Unauthorized("Invalid Authorization header format".to_string()));

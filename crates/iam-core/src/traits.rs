@@ -37,6 +37,7 @@ pub trait UserRepositoryTrait: Send + Sync {
         pda: &str,
         signature: &str,
     ) -> Result<()>;
+    async fn health_check(&self) -> Result<()>;
 }
 
 /// Trait for wallet data access
@@ -93,6 +94,7 @@ pub trait EmailTrait: Send + Sync {
 #[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
 pub trait EventBusTrait: Send + Sync {
     async fn publish(&self, event: &crate::domain::identity::Event) -> Result<()>;
+    async fn publish_batch(&self, events: &[crate::domain::identity::Event]) -> Result<()>;
 }
 
 /// Trait for blockchain operations
