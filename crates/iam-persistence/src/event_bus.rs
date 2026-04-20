@@ -120,16 +120,54 @@ impl EventBus {
     }
 
     /// Publish multiple events atomically in a single pipeline.
-    pub async fn publish_batch(&self, events: &[Event]) -> Result<Vec<String>> {
+    pub async fn publish_batch_raw(&self, events: &[Event]) -> Result<Vec<String>> {
+        // 1. Dual-write to Kafka
+        if let Some(kafka) = &self.kafka {
+            let _ = kafka.publish_batch(events).await.map_err(|e| {
+                warn!("Kafka batch publish failed (non-critical): {}", e);
+            });
+        }
+
         let mut ids = Vec::with_capacity(events.len());
 
         for event in events {
-            let id = self.publish_raw(event).await?;
+            let id = self.publish_raw_no_kafka(event).await?;
             ids.push(id);
         }
 
         info!(count = ids.len(), "Batch events published to Redis stream");
         Ok(ids)
+    }
+
+    async fn publish_raw_no_kafka(&self, event: &Event) -> Result<String> {
+        let payload = serde_json::to_string(event)
+            .context("Failed to serialize event")?;
+
+        let mut conn = self.conn.clone();
+        let entry_id: String = conn.xadd(
+            &self.stream_name,
+            "*",                              // auto-generate ID
+            &[("event", &payload)],
+        ).await
+            .context("Redis XADD failed")?;
+
+        // Trim stream to bound memory usage
+        let _: () = conn.xtrim(
+            &self.stream_name,
+            redis::streams::StreamMaxlen::Approx(MAX_STREAM_LEN),
+        ).await
+            .unwrap_or_else(|e| {
+                warn!("XTRIM failed (non-critical): {}", e);
+            });
+
+        info!(
+            event_type = %event.event_type,
+            event_id = %event.id,
+            stream_entry = %entry_id,
+            "Event published to Redis stream"
+        );
+
+        Ok(entry_id)
     }
 }
 
@@ -140,15 +178,7 @@ impl EventBusTrait for EventBus {
     }
 
     async fn publish_batch(&self, events: &[Event]) -> IamResult<()> {
-        let mut ids = Vec::with_capacity(events.len());
-
-        for event in events {
-            let id = self.publish_raw(event).await.map_err(|e| ApiError::Internal(e.to_string()))?;
-            ids.push(id);
-        }
-
-        info!(count = ids.len(), "Batch events published to Redis stream");
-        Ok(())
+        self.publish_batch_raw(events).await.map(|_| ()).map_err(|e| ApiError::Internal(e.to_string()))
     }
 }
 

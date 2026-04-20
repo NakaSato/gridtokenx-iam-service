@@ -59,6 +59,18 @@ impl KafkaEventBus {
 
     /// Publish an IAM domain event to Kafka.
     pub async fn publish(&self, event: &Event) -> Result<String> {
+        self.publish_raw(event).await
+    }
+
+    /// Publish a batch of IAM domain events to Kafka.
+    pub async fn publish_batch(&self, events: &[Event]) -> Result<()> {
+        for event in events {
+            self.publish_raw(event).await?;
+        }
+        Ok(())
+    }
+
+    async fn publish_raw(&self, event: &Event) -> Result<String> {
         let payload = serde_json::to_vec(event)?;
         
         // Route events based on type
