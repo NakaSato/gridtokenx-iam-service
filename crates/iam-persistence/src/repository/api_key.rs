@@ -57,7 +57,7 @@ impl ApiKeyRepositoryTrait for ApiKeyRepository {
         .bind(hash)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| ApiError::Database(e))?;
+        .map_err(ApiError::from)?;
 
         Ok(row.map(|r| r.into_domain()))
     }

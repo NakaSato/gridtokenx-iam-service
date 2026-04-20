@@ -6,9 +6,10 @@
 use redis::{AsyncCommands, Client, aio::ConnectionManager};
 use anyhow::{Result, Context};
 use tracing::{info, warn};
-use uuid::Uuid;
-use chrono::Utc;
 use async_trait::async_trait;
+
+#[cfg(test)]
+use uuid::Uuid;
 pub mod kafka;
 pub mod rabbitmq;
 

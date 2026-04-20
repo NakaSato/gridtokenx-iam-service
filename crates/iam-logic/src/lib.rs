@@ -1,3 +1,8 @@
+//! Business logic and domain services for the GridTokenX IAM service.
+//!
+//! This crate implements the core business rules and workflows, such as user authentication,
+//! password management, and blockchain integration, independent of specific I/O implementations.
+
 pub mod auth_service;
 pub mod password;
 pub mod jwt_service;

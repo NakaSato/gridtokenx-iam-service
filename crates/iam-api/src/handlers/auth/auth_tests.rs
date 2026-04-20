@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use axum::{Router, routing::{post, get}, http::{Request, StatusCode, header}, body::Body};
+    use axum::{Router, routing::post, http::{Request, StatusCode, header}, body::Body};
     use tower::ServiceExt;
     use http_body_util::BodyExt;
     use iam_core::traits::{
@@ -10,16 +10,14 @@ mod tests {
     use iam_core::config::Config;
     use iam_logic::AuthService;
     use iam_logic::{JwtService, ApiKeyService};
-    use crate::handlers::auth::{login, register, get_me};
-    use crate::handlers::types::{RegistrationRequest, LoginRequest};
+    use crate::handlers::auth::login;
+    use crate::handlers::types::LoginRequest;
     use std::sync::Arc;
     use uuid::Uuid;
     use iam_core::domain::identity::{User, UserWithHash};
     use gridtokenx_blockchain_core::auth::INTERNAL_ROLE_HEADER;
-    use gridtokenx_blockchain_core::rpc::transaction::{ChainBridgeProvider, TransactionHandler, MockChainBridgeProvider};
+    use gridtokenx_blockchain_core::rpc::transaction::{TransactionHandler, MockChainBridgeProvider};
     use gridtokenx_blockchain_core::rpc::metrics::NoopMetrics;
-    use async_trait::async_trait;
-    use mockall::predicate::*;
 
     fn mock_wallet_service() -> Arc<gridtokenx_blockchain_core::WalletService> {
         let provider = Arc::new(MockChainBridgeProvider::default());
@@ -51,6 +49,15 @@ mod tests {
             smtp_from: "noreply@test.com".to_string(),
             app_base_url: "http://localhost:3000".to_string(),
             grpc_port: None,
+            registry_program_id: "HZR6b8G3pUUKRnt4XAMA8rdYRpAsNY1xk3Zo4crShvY".to_string(),
+            oracle_program_id: "DdeZQdfv7qtnhHktPt8CevKrW6BvjbgKknkD7c63C9hP".to_string(),
+            governance_program_id: "6FsfuFEg8LHjSiejc8om8Q6iSaAgfEWHCgz78PT8jocw".to_string(),
+            energy_token_program_id: "GjSjmPt8VSHr49ti4BijWZSu7rwb8o32pod7gNBnTY4U".to_string(),
+            trading_program_id: "DXxHdUar3pUUKRnt4XAMA8rdYRpAsNY1xk3Zo4crShvY".to_string(),
+            auth_cpu_semaphore_limit: 32,
+            tokio_worker_threads: Some(4),
+            database_max_connections: 50,
+            database_min_connections: 5,
         })
     }
 
@@ -67,6 +74,10 @@ mod tests {
         cache.expect_exists().returning(|_| Box::pin(async { Ok(false) }));
         cache.expect_get_value().returning(|_| Box::pin(async { Ok(None) }));
         
+        let mut event_bus = MockEventBusTrait::new();
+        // Login attempt event on failure
+        event_bus.expect_publish().returning(|_| Box::pin(async { Ok(()) }));
+
         let config = mock_config();
         let jwt_service = JwtService::new(&config.jwt_secret).unwrap();
         let api_key_service = ApiKeyService::new(config.api_key_secret.clone()).unwrap();
@@ -79,7 +90,7 @@ mod tests {
             jwt_service,
             api_key_service,
             Arc::new(cache),
-            Arc::new(MockEventBusTrait::new()),
+            Arc::new(event_bus),
             Arc::new(MockEmailTrait::new()),
             Arc::new(MockBlockchainTrait::new()),
             mock_wallet_service(),
@@ -126,6 +137,10 @@ mod tests {
                     last_name: None,
                     wallet_address: None,
                     is_active: true,
+                    blockchain_registered: false,
+                    user_type: None,
+                    latitude: None,
+                    longitude: None,
                 };
                 let hash_clone = hash.clone();
                 Box::pin(async move {
@@ -143,7 +158,7 @@ mod tests {
         cache.expect_delete().returning(|_| Box::pin(async { Ok(()) }));
 
         let mut event_bus = MockEventBusTrait::new();
-        event_bus.expect_publish().returning(|_| Box::pin(async { Ok(()) }));
+        event_bus.expect_publish_batch().returning(|_| Box::pin(async { Ok(()) }));
 
         let config = mock_config();
         let jwt_service = JwtService::new(&config.jwt_secret).unwrap();

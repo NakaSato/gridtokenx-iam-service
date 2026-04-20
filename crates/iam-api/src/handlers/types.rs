@@ -7,7 +7,6 @@ use axum::{
 };
 use iam_core::error::{ApiError, Result as ApiResult};
 use iam_core::domain::identity::Claims;
-use iam_logic::JwtService;
 
 pub struct AuthenticatedUser(pub Claims);
 

@@ -15,7 +15,7 @@ mod tests {
         let role = "user";
 
         // 1. Create User
-        repo.create(id, &username, &email, password_hash, role, Some("First"), Some("Last")).await?;
+        repo.create(id, &username, &email, password_hash, role, Some("First"), Some("Last"), None).await?;
 
         // 2. Find by username
         let user = repo.find_by_username_or_email(&username).await?.expect("User not found by username");
@@ -39,6 +39,9 @@ mod tests {
         let user = repo.find_by_username_or_email(&email).await?.expect("User not found after password update");
         assert_eq!(user.password_hash, new_hash);
 
+        // 6. Health Check
+        repo.health_check().await?;
+
         Ok(())
     }
 
@@ -51,7 +54,7 @@ mod tests {
         let wallet_repo = WalletRepository::new(pool);
         
         let user_id = Uuid::new_v4();
-        user_repo.create(user_id, "walletuser", "wallet@test.com", "hash", "user", None, None).await?;
+        user_repo.create(user_id, "walletuser", "wallet@test.com", "hash", "user", None, None, None).await?;
 
         // 1. Link Wallet
         let address = "SolWallet123";
@@ -86,7 +89,7 @@ mod tests {
         let api_key_repo = ApiKeyRepository::new(pool);
         
         let user_id = Uuid::new_v4();
-        user_repo.create(user_id, "keyuser", "key@test.com", "hash", "user", None, None).await?;
+        user_repo.create(user_id, "keyuser", "key@test.com", "hash", "user", None, None, None).await?;
 
         // Manual insert since we don't have a create method in the trait yet (usually handled by a service)
         let key_id = Uuid::new_v4();

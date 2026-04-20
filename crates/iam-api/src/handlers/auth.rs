@@ -8,8 +8,8 @@ use crate::handlers::types::{
 mod auth_tests;
 use crate::middleware::metrics;
 use iam_core::error::Result as ApiResult;
-use iam_core::domain::identity::Claims;
 use iam_logic::AuthService;
+
 use axum::{Json, extract::State};
 use tracing::instrument;
 use std::time::Instant;

@@ -8,9 +8,8 @@ use iam_core::traits::{
 use iam_core::config::Config;
 use crate::auth_service::AuthService;
 use crate::jwt_service::{JwtService, ApiKeyService};
-use gridtokenx_blockchain_core::rpc::transaction::{ChainBridgeProvider, TransactionHandler, MockChainBridgeProvider};
+use gridtokenx_blockchain_core::rpc::transaction::{TransactionHandler, MockChainBridgeProvider};
 use gridtokenx_blockchain_core::rpc::metrics::NoopMetrics;
-use async_trait::async_trait;
 
 fn mock_wallet_service() -> Arc<gridtokenx_blockchain_core::WalletService> {
     let provider = Arc::new(MockChainBridgeProvider::default());
@@ -48,6 +47,9 @@ fn mock_config() -> Arc<Config> {
         trading_program_id: "DXxHdUar3pUUKRnt4XAMA8rdYRpAsNY1xk3Zo4crShvY".to_string(),
         auth_cpu_semaphore_limit: 32,
         grpc_port: Some(4020),
+        tokio_worker_threads: Some(4),
+        database_max_connections: 50,
+        database_min_connections: 5,
     })
 }
 

@@ -192,7 +192,7 @@ impl WalletRepositoryTrait for WalletRepository {
         .bind(address)
         .execute(&self.pool)
         .await
-        .map_err(|e| ApiError::Database(e))?;
+        .map_err(ApiError::from)?;
 
         Ok(())
     }

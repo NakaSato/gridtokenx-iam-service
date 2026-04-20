@@ -53,8 +53,18 @@ RUN chown -R appuser:appgroup /app
 # Use non-root user
 USER appuser
 
-# Expose ports (HTTP: 8080, gRPC: 8090)
-EXPOSE 8080 8090
+# Expose ports (HTTP: 4010, gRPC: 4020)
+EXPOSE 4010 4020
+
+# Default Configuration
+ENV ENVIRONMENT=production \
+    IAM_PORT=4010 \
+    IAM_GRPC_PORT=4020 \
+    LOG_LEVEL=info \
+    AUTH_CPU_SEMAPHORE_LIMIT=32 \
+    TOKIO_WORKER_THREADS=4 \
+    DATABASE_MAX_CONNECTIONS=50 \
+    DATABASE_MIN_CONNECTIONS=5
 
 # Run the binary
 ENTRYPOINT ["/app/iam-service"]

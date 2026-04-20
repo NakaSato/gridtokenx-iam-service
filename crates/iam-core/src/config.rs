@@ -32,6 +32,8 @@ pub struct Config {
     pub trading_program_id: String,
     pub auth_cpu_semaphore_limit: usize,
     pub tokio_worker_threads: Option<usize>,
+    pub database_max_connections: u32,
+    pub database_min_connections: u32,
 }
 
 impl Config {
@@ -92,6 +94,12 @@ impl Config {
             tokio_worker_threads: env::var("TOKIO_WORKER_THREADS")
                 .ok()
                 .and_then(|v| v.parse().ok()),
+            database_max_connections: env::var("DATABASE_MAX_CONNECTIONS")
+                .unwrap_or_else(|_| "50".to_string())
+                .parse()?,
+            database_min_connections: env::var("DATABASE_MIN_CONNECTIONS")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()?,
         })
     }
 }

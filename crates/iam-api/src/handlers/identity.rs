@@ -1,7 +1,6 @@
 use axum::{
     Json,
-    extract::{State, FromRequestParts, Path},
-    http::request::Parts,
+    extract::{State, Path},
 };
 use tracing::instrument;
 use uuid::Uuid;
@@ -14,8 +13,6 @@ use crate::handlers::types::{
     LinkWalletRequest, LinkWalletResponse, WalletListResponse, DeleteWalletResponse,
     UserWallet, UserType, AuthenticatedUser,
 };
-use iam_core::domain::identity::Claims;
-use iam_logic::JwtService;
 
 #[utoipa::path(
     post,

@@ -8,7 +8,6 @@ use serde_json::json;
 use anyhow::Context;
 
 use iam_core::config::Config;
-use iam_core::domain::identity::UserWithHash;
 use gridtokenx_blockchain_core::auth::ServiceRole;
 
 use iam_api::handlers::auth::{login, register, verify, get_me, forgot_password, reset_password};
@@ -28,14 +27,14 @@ use iam_core::traits::{
 pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()> {
     // 1. Initialize Database
     let db_pool = PgPoolOptions::new()
-        .max_connections(50)
-        .min_connections(5)
+        .max_connections(config.database_max_connections)
+        .min_connections(config.database_min_connections)
         .acquire_timeout(std::time::Duration::from_secs(30))
         .idle_timeout(std::time::Duration::from_secs(600))
         .connect(&config.database_url)
         .await
         .context("Failed to connect to PostgreSQL")?;
-    info!("✅ Connected to PostgreSQL");
+    info!("✅ Connected to PostgreSQL (max_conns: {})", config.database_max_connections);
 
     // Run database migrations
     sqlx::migrate!("../../migrations")
@@ -130,7 +129,23 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         .route("/health/ready", axum::routing::get(health_ready))
         .route("/health/live", axum::routing::get(health_live))
         .layer(axum::Extension(ServiceRole::IamService))
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(tower_http::trace::TraceLayer::new_for_http()
+            .make_span_with(|request: &axum::http::Request<axum::body::Body>| {
+                let request_id = request
+                    .headers()
+                    .get(iam_api::middleware::request_id::X_REQUEST_ID)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("unknown");
+
+                tracing::info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    uri = %request.uri(),
+                    request_id = %request_id,
+                )
+            })
+        )
+        .layer(middleware::from_fn(iam_api::middleware::request_id::request_id_middleware))
         .layer(middleware::from_fn(metrics::metrics_middleware))
         .with_state(auth_service.clone());
 
@@ -159,9 +174,10 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
     info!("🚀 IAM gRPC Service starting on {}", grpc_addr);
 
     let rest_token = token.clone();
-    let rest_handle = axum::serve(rest_listener, app)
+    let rest_server = axum::serve(rest_listener, app)
         .with_graceful_shutdown(async move {
             rest_token.cancelled().await;
+            info!("🔄 IAM REST Service shutting down...");
         });
 
     let grpc_token = token.clone();
@@ -179,19 +195,20 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         }
     };
 
-    tokio::select! {
-        res = rest_handle => {
-            if let Err(e) = res {
-                error!("REST server failed: {}", e);
-            }
-        }
-        res = grpc_handle => {
-            if let Err(e) = res {
-                error!("gRPC server failed: {}", e);
-            }
-        }
-    };
+    // Run both servers concurrently and wait for BOTH to finish
+    let (rest_res, grpc_res) = tokio::join!(
+        async { rest_server.await.map_err(|e| anyhow::anyhow!("REST server error: {}", e)) },
+        async { grpc_handle.await.map_err(|e| anyhow::anyhow!("gRPC server error: {}", e)) }
+    );
 
+    if let Err(e) = rest_res {
+        error!("❌ REST server encountered an error: {}", e);
+    }
+    if let Err(e) = grpc_res {
+        error!("❌ gRPC server encountered an error: {}", e);
+    }
+
+    info!("👋 IAM Service stopped successfully");
     Ok(())
 }
 

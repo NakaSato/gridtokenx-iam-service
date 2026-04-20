@@ -10,7 +10,7 @@ use iam_logic::AuthService;
 // Integration with generated proto code
 pub use iam_protocol::identity;
 
-use identity::{IdentityService, TokenRequestView, AuthorizeRequestView, ApiKeyRequestView};
+use identity::{TokenRequestView, AuthorizeRequestView, ApiKeyRequestView};
 use identity::{ApiKeyResponse, AuthorizeResponse, ClaimsResponse, UserInfoResponse};
 
 pub struct IdentityGrpcService {

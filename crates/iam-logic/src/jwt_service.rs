@@ -1,5 +1,4 @@
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use std::env;
 use uuid::Uuid;
 
 use iam_core::error::{ApiError, Result};
