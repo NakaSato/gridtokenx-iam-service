@@ -640,4 +640,29 @@ impl AuthService {
         let val = serde_json::to_value(value).map_err(|e| ApiError::Internal(e.to_string()))?;
         self.cache.set_value(key, val, ttl).await
     }
+
+    pub async fn check_rate_limit(&self, ip: &str, endpoint: &str, limit: u64, window_secs: u64) -> Result<()> {
+        let key = iam_core::domain::identity::keys::cache::rate_limit(ip, endpoint);
+        
+        let count = self.cache.increment(&key).await?;
+        
+        // If it's the first hit, set the expiration
+        if count == 1 {
+            // We use a dummy value for set_value just to set TTL on the existing key if needed,
+            // but increment in Redis already creates the key. 
+            // Most Redis clients handle TTL on INCR via separate EXPIRE.
+            // Our CacheTrait increment doesn't take TTL, so we handle it here.
+            let _ = self.cache.set_value(&key, serde_json::Value::Number(count.into()), Some(window_secs)).await;
+        }
+
+        if count > limit {
+            tracing::warn!("Rate limit exceeded for IP: {} on endpoint: {}", ip, endpoint);
+            return Err(ApiError::with_code(
+                iam_core::error::ErrorCode::TooManyRequests,
+                format!("Rate limit exceeded. Please try again in {} seconds.", window_secs)
+            ));
+        }
+
+        Ok(())
+    }
 }

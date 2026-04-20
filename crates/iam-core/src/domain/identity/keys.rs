@@ -29,4 +29,9 @@ pub mod cache {
     pub fn password_reset_token(token: &str) -> String {
         format!("iam:password_reset:{}", token)
     }
+
+    /// IP-based rate limit counter.
+    pub fn rate_limit(ip: &str, endpoint: &str) -> String {
+        format!("iam:rate_limit:{}:{}", endpoint, ip)
+    }
 }

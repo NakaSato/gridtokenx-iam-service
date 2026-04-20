@@ -1,6 +1,7 @@
 use axum::{Router, routing::post, middleware, response::IntoResponse, http::StatusCode, Json, extract::State};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
+use std::net::SocketAddr;
 use connectrpc::Server;
 use tracing::{info, error};
 use tokio_util::sync::CancellationToken;
@@ -111,12 +112,16 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
     );
 
     // 5. Build REST Router
+    let auth_routes = Router::new()
+        .route("/register", post(register))
+        .route("/login", post(login))
+        .route("/verify", axum::routing::get(verify))
+        .route("/forgot-password", post(forgot_password))
+        .route("/reset-password", post(reset_password))
+        .layer(middleware::from_fn_with_state(auth_service.clone(), iam_api::middleware::rate_limit::rate_limit_middleware));
+
     let app = Router::new()
-        .route("/api/v1/auth/register", post(register))
-        .route("/api/v1/auth/login", post(login))
-        .route("/api/v1/auth/verify", axum::routing::get(verify))
-        .route("/api/v1/auth/forgot-password", post(forgot_password))
-        .route("/api/v1/auth/reset-password", post(reset_password))
+        .nest("/api/v1/auth", auth_routes)
         .route("/api/v1/users/me", axum::routing::get(get_me))
         .route("/api/v1/identity/onboard", post(iam_api::handlers::identity::onboard_user))
         .route("/api/v1/identity/wallets", post(iam_api::handlers::identity::link_wallet))
@@ -177,8 +182,11 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
     info!("🚀 IAM gRPC Service starting on {}", grpc_addr);
 
     let rest_token = token.clone();
-    let rest_server = axum::serve(rest_listener, app)
-        .with_graceful_shutdown(async move {
+    let rest_server = axum::serve(
+        rest_listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
             rest_token.cancelled().await;
             info!("🔄 IAM REST Service shutting down...");
         });
