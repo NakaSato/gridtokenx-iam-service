@@ -58,6 +58,8 @@ mod tests {
             tokio_worker_threads: Some(4),
             database_max_connections: 50,
             database_min_connections: 5,
+            request_timeout_secs: 30,
+            global_concurrency_limit: 100,
         })
     }
 

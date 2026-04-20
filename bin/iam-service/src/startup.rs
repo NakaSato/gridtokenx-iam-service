@@ -142,9 +142,12 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
                     method = %request.method(),
                     uri = %request.uri(),
                     request_id = %request_id,
+                    user_id = tracing::field::Empty,
                 )
             })
         )
+        .layer(tower::limit::ConcurrencyLimitLayer::new(config.global_concurrency_limit))
+        .layer(tower_http::timeout::TimeoutLayer::new(std::time::Duration::from_secs(config.request_timeout_secs)))
         .layer(middleware::from_fn(iam_api::middleware::request_id::request_id_middleware))
         .layer(middleware::from_fn(metrics::metrics_middleware))
         .with_state(auth_service.clone());

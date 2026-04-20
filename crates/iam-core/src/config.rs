@@ -34,6 +34,8 @@ pub struct Config {
     pub tokio_worker_threads: Option<usize>,
     pub database_max_connections: u32,
     pub database_min_connections: u32,
+    pub request_timeout_secs: u64,
+    pub global_concurrency_limit: usize,
 }
 
 impl Config {
@@ -99,6 +101,12 @@ impl Config {
                 .parse()?,
             database_min_connections: env::var("DATABASE_MIN_CONNECTIONS")
                 .unwrap_or_else(|_| "5".to_string())
+                .parse()?,
+            request_timeout_secs: env::var("REQUEST_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse()?,
+            global_concurrency_limit: env::var("GLOBAL_CONCURRENCY_LIMIT")
+                .unwrap_or_else(|_| "100".to_string())
                 .parse()?,
         })
     }

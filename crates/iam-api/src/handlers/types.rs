@@ -37,6 +37,10 @@ impl FromRequestParts<iam_logic::AuthService> for AuthenticatedUser
             e
         })?;
         
+        // ── Semantic Logging ──────────────────────────────────────────
+        // Record user_id in the current tracing span for all subsequent logs
+        tracing::Span::current().record("user_id", &claims.sub.to_string());
+        
         Ok(AuthenticatedUser(claims))
     }
 }
