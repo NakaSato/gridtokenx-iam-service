@@ -93,3 +93,19 @@ This ensures guaranteed `dyn` compatibility and stable compilation across the mo
 
 ### Safe Password Handling
 Passwords are never stored in plain text or logged. We use **Argon2id** (via `bcrypt` or specialized crates) for state-of-the-art hashing resistance.
+
+## ⚡ Concurrency & CPU Safety
+
+To maintain high throughput and low latency, the service rigorously separates I/O-bound tasks from CPU-bound tasks to avoid **Tokio Worker Starvation**.
+
+### 1. Offloading CPU-Bound Work
+Heavy compute tasks (e.g., Password hashing/verification, complex cryptography) MUST NOT run directly on Tokio threads.
+- **Pattern**: Use `tokio::task::spawn_blocking` for standard blocking/CPU tasks.
+- **Current usage**: Applied in `AuthService` for all password operations.
+
+### 2. Guidance for Rayon Integration
+If parallel iterators (`rayon`) are introduced in the future for batch processing:
+- **Decoupled Pools**: Rayon and Tokio thread pools must be configured with explicit thread budgets to avoid CFS throttling in containerized environments.
+- **Budgeting**: Set `num_threads` based on CPU **requests** (baseline), not limits (burst).
+- **Bridge via Oneshot**: Dispatch work to Rayon using `tokio::sync::oneshot` to bridge the async/sync boundary without blocking the executor.
+- **Thresholds**: Only use parallel processing for datasets exceeding a measured threshold (e.g., >100 items) to avoid coordination overhead.

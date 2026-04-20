@@ -8,7 +8,7 @@ The **IAM Service** is the central identity and security authority for the GridT
 
 The IAM Service is built as a **Modular Monolith** using Rust, balancing maintainability with high performance. It uses a trait-based dependency injection pattern to ensure clean separation between business logic and infrastructure.
 
-### rchitecture Diagram
+### Architecture Diagram
 
 ```mermaid
 graph TD
