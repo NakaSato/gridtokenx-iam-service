@@ -2,7 +2,7 @@
 # Test: register, login, forgot-password, reset-password
 set -euo pipefail
 
-BASE="http://localhost:4010"
+BASE="${BASE:-http://localhost:4010}"
 MAILPIT="http://localhost:13060"
 TS=$(date +%s)
 USER="testpwd_${TS}"

@@ -3,10 +3,13 @@
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// holds the telemetry provider (kept as unit for backward compatibility)
+/// Guard that manages the lifecycle of the telemetry system.
+/// Currently a placeholder for future complex teardown logic.
 #[derive(Debug)]
 pub struct TelemetryGuard;
 
 impl TelemetryGuard {
+    /// Shuts down the telemetry system and flushes any pending logs.
     pub fn shutdown(&self) {}
 }
 

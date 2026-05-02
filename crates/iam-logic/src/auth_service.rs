@@ -20,7 +20,7 @@ pub struct AuthService {
     pub user_repo: Arc<dyn UserRepositoryTrait>,
     pub wallet_repo: Arc<dyn WalletRepositoryTrait>,
     pub api_key_repo: Arc<dyn ApiKeyRepositoryTrait>,
-    config: Arc<Config>,
+    pub config: Arc<Config>,
     jwt_service: JwtService,
     api_key_service: ApiKeyService,
     pub cache: Arc<dyn CacheTrait>,
@@ -33,6 +33,7 @@ pub struct AuthService {
 }
 
 impl AuthService {
+    /// Creates a new instance of the AuthService with all its dependencies.
     pub fn new(
         user_repo: Arc<dyn UserRepositoryTrait>,
         wallet_repo: Arc<dyn WalletRepositoryTrait>,
@@ -63,12 +64,17 @@ impl AuthService {
         }
     }
 
+    /// Returns a reference to the JWT service used by this auth service.
     pub fn jwt_service(&self) -> &JwtService {
         &self.jwt_service
     }
 }
 
 impl AuthService {
+    /// Authenticates a user with username/email and password.
+    /// 
+    /// This method performs rate-limiting checks, credential verification (using bcrypt in a blocking thread),
+    /// and issues a JWT token upon success. It also publishes domain events for audit trails.
     pub async fn login(&self, username: String, password: String) -> Result<AuthResult> {
         info!("🔐 Login attempt for: {}", username);
 
@@ -180,6 +186,10 @@ impl AuthService {
         })
     }
 
+    /// Registers a new user account.
+    /// 
+    /// This method validates the username/email, hashes the password, creates the user record,
+    /// and generates an email verification token.
     pub async fn register(
         &self,
         username: String,
@@ -247,6 +257,9 @@ impl AuthService {
         })
     }
 
+    /// Verifies a user's email address using a verification token.
+    /// 
+    /// Upon success, the account is activated and a primary Solana wallet is initialized.
     pub async fn verify_email(&self, token: String) -> Result<VerifyEmailResult> {
         info!("📧 Email verification attempt for token: {}", token);
 
@@ -366,6 +379,7 @@ impl AuthService {
         Ok(api_key)
     }
 
+    /// Retrieves the public profile of a user by their ID.
     pub async fn get_user_profile(&self, user_id: Uuid) -> Result<User> {
         self.user_repo.find_by_id(user_id).await?
             .ok_or_else(|| ApiError::NotFound("User not found".to_string()))
@@ -398,6 +412,7 @@ impl AuthService {
         Ok(())
     }
 
+    /// Links a new Solana wallet to an existing user account.
     pub async fn link_wallet(
         &self,
         user_id: Uuid,
@@ -541,6 +556,7 @@ impl AuthService {
         }
     }
 
+    /// Initiates the password reset process by sending an email with a reset token.
     pub async fn forgot_password(&self, email: &str) -> Result<()> {
         // Always return Ok to avoid email enumeration
         let exists = self.user_repo.find_by_username_or_email(email).await?.is_some();
@@ -562,6 +578,7 @@ impl AuthService {
         Ok(())
     }
 
+    /// Resets a user's password using a valid reset token.
     pub async fn reset_password(&self, token: &str, new_password: &str) -> Result<()> {
         let key = iam_core::domain::identity::keys::cache::password_reset_token(token);
         let email: Option<String> = self.cache_get(&key).await?;
@@ -607,6 +624,7 @@ impl AuthService {
         Ok(())
     }
 
+    /// Initializes a user's wallet on-chain and funds it with an initial balance.
     pub async fn initialize_user_wallet(
         &self,
         user_id: Uuid,

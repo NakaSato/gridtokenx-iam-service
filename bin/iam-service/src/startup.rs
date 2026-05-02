@@ -12,6 +12,7 @@ use iam_core::config::Config;
 use gridtokenx_blockchain_core::auth::ServiceRole;
 
 use iam_api::handlers::auth::{login, register, verify, get_me, forgot_password, reset_password};
+use iam_api::handlers::system::get_config;
 use iam_api::identity_grpc::{
     IdentityGrpcService, identity::IdentityServiceExt,
 };
@@ -25,6 +26,11 @@ use iam_core::traits::{
     CacheTrait, EmailTrait, EventBusTrait
 };
 
+/// Starts the IAM service with the provided configuration.
+/// 
+/// This function initializes all dependencies (DB, Redis, Chain Bridge), 
+/// runs database migrations, and starts both REST and gRPC servers.
+/// It respects the provided `CancellationToken` for graceful shutdown.
 pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()> {
     // 1. Initialize Database
     let db_pool = PgPoolOptions::new()
@@ -122,13 +128,14 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
 
     let app = Router::new()
         .nest("/api/v1/auth", auth_routes)
+        .route("/api/v1/system/config", axum::routing::get(get_config))
         .route("/api/v1/users/me", axum::routing::get(get_me))
-        .route("/api/v1/identity/onboard", post(iam_api::handlers::identity::onboard_user))
-        .route("/api/v1/identity/wallets", post(iam_api::handlers::identity::link_wallet))
-        .route("/api/v1/identity/wallets", axum::routing::get(iam_api::handlers::identity::list_wallets))
-        .route("/api/v1/identity/wallets/{wallet_id}", axum::routing::get(iam_api::handlers::identity::get_wallet))
-        .route("/api/v1/identity/wallets/{wallet_id}", axum::routing::delete(iam_api::handlers::identity::unlink_wallet))
-        .route("/api/v1/identity/wallets/{wallet_id}/primary", axum::routing::put(iam_api::handlers::identity::set_primary_wallet))
+        .route("/api/v1/users/me/onchain-profile", post(iam_api::handlers::identity::onboard_user))
+        .route("/api/v1/users/me/wallets", post(iam_api::handlers::identity::link_wallet))
+        .route("/api/v1/users/me/wallets", axum::routing::get(iam_api::handlers::identity::list_wallets))
+        .route("/api/v1/users/me/wallets/{wallet_id}", axum::routing::get(iam_api::handlers::identity::get_wallet))
+        .route("/api/v1/users/me/wallets/{wallet_id}", axum::routing::delete(iam_api::handlers::identity::unlink_wallet))
+        .route("/api/v1/users/me/wallets/{wallet_id}/primary", axum::routing::put(iam_api::handlers::identity::set_primary_wallet))
         .route("/metrics", axum::routing::get(get_metrics))
         .route("/health", axum::routing::get(health_check))
         .route("/health/ready", axum::routing::get(health_ready))

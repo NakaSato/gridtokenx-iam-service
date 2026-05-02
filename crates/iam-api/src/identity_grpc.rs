@@ -13,12 +13,14 @@ pub use iam_protocol::identity;
 use identity::{TokenRequestView, AuthorizeRequestView, ApiKeyRequestView};
 use identity::{ApiKeyResponse, AuthorizeResponse, ClaimsResponse, UserInfoResponse};
 
+/// gRPC service implementation for the Identity service, using ConnectRPC.
 pub struct IdentityGrpcService {
     auth_service: AuthService,
     jwt_service: JwtService,
 }
 
 impl IdentityGrpcService {
+    /// Creates a new instance of the Identity gRPC service.
     pub fn new(auth_service: AuthService, jwt_service: JwtService) -> Self {
         Self {
             auth_service,

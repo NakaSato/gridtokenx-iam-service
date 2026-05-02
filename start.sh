@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 set -e
 
-BINARY="/Users/chanthawat/Developments/gridtokenx-coresystem/target/release/gridtokenx-iam-service"
+BINARY="./target/debug/gridtokenx-iam-service"
 LOG="/tmp/iam-service.log"
 
 # Kill existing
 pkill -9 -f "gridtokenx-iam-service" 2>/dev/null || true
 sleep 1
 
-# Build if binary missing or source newer
-if [[ ! -f "$BINARY" ]] || find /Users/chanthawat/Developments/gridtokenx-coresystem/gridtokenx-iam-service/src -newer "$BINARY" | grep -q .; then
+# Build if binary missing
+if [[ ! -f "$BINARY" ]]; then
   echo "Building..."
-  cargo build --release -p gridtokenx-iam-service \
-    --manifest-path /Users/chanthawat/Developments/gridtokenx-coresystem/Cargo.toml 2>&1 | tail -3
+  cargo build -p gridtokenx-iam-service
 fi
 
 # Start

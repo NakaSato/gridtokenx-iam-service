@@ -14,9 +14,23 @@ use crate::handlers::types::{
     UserWallet, UserType, AuthenticatedUser,
 };
 
+fn map_user_wallet(w: iam_core::domain::identity::UserWallet) -> UserWallet {
+    UserWallet {
+        id: w.id,
+        user_id: Some(w.user_id),
+        wallet_address: w.wallet_address,
+        label: w.label,
+        is_primary: w.is_primary,
+        status: if w.verified { "verified" } else { "unverified" }.to_string(),
+        created_at: w.created_at,
+        verified: w.verified,
+        blockchain_registered: w.blockchain_registered,
+    }
+}
+
 #[utoipa::path(
     post,
-    path = "/api/v1/identity/onboard",
+    path = "/api/v1/users/me/onchain-profile",
     request_body = OnChainOnboardingRequest,
     responses(
         (status = 200, description = "Onboarding successful", body = OnChainOnboardingResponse),
@@ -47,22 +61,22 @@ pub async fn onboard_user(
     let response = auth_service.onboard_user_on_chain(
         claims.sub,
         user_type,
-        request.lat_e7,
-        request.long_e7,
+        request.location.lat_e7,
+        request.location.long_e7,
         request.h3_index,
         request.shard_id,
     ).await?;
 
     Ok(Json(OnChainOnboardingResponse {
-        success: response.success,
-        message: response.message,
+        status: if response.success { "processing".to_string() } else { "failed".to_string() },
         transaction_signature: response.transaction_signature,
+        message: response.message,
     }))
 }
 
 #[utoipa::path(
     post,
-    path = "/api/v1/identity/wallets",
+    path = "/api/v1/users/me/wallets",
     request_body = LinkWalletRequest,
     responses(
         (status = 200, description = "Wallet linked successfully", body = LinkWalletResponse),
@@ -93,27 +107,12 @@ pub async fn link_wallet(
         request.is_primary,
     ).await?;
 
-    let message = if w.blockchain_registered {
-        "Wallet linked and registered on-chain successfully".to_string()
-    } else {
-        "Wallet linked successfully".to_string()
-    };
-
-    Ok(Json(LinkWalletResponse {
-        wallet: UserWallet {
-            id: w.id, user_id: w.user_id, wallet_address: w.wallet_address,
-            label: w.label, is_primary: w.is_primary, verified: w.verified,
-            blockchain_registered: w.blockchain_registered, user_account_pda: w.user_account_pda,
-            shard_id: w.shard_id, blockchain_tx_signature: w.blockchain_tx_signature,
-            created_at: w.created_at,
-        },
-        message,
-    }))
+    Ok(Json(map_user_wallet(w)))
 }
 
 #[utoipa::path(
     get,
-    path = "/api/v1/identity/wallets",
+    path = "/api/v1/users/me/wallets",
     responses(
         (status = 200, description = "List of wallets", body = WalletListResponse),
         (status = 401, description = "Unauthorized"),
@@ -134,19 +133,13 @@ pub async fn list_wallets(
     let wallets = auth_service.list_wallets(claims.sub).await?;
     
     Ok(Json(WalletListResponse {
-        wallets: wallets.into_iter().map(|w| UserWallet {
-            id: w.id, user_id: w.user_id, wallet_address: w.wallet_address,
-            label: w.label, is_primary: w.is_primary, verified: w.verified,
-            blockchain_registered: w.blockchain_registered, user_account_pda: w.user_account_pda,
-            shard_id: w.shard_id, blockchain_tx_signature: w.blockchain_tx_signature,
-            created_at: w.created_at,
-        }).collect(),
+        wallets: wallets.into_iter().map(map_user_wallet).collect(),
     }))
 }
 
 #[utoipa::path(
     get,
-    path = "/api/v1/identity/wallets/{wallet_id}",
+    path = "/api/v1/users/me/wallets/{wallet_id}",
     params(("wallet_id" = Uuid, Path, description = "Wallet ID")),
     responses(
         (status = 200, description = "Wallet details", body = UserWallet),
@@ -169,18 +162,12 @@ pub async fn get_wallet(
     
     let w = auth_service.get_wallet(claims.sub, wallet_id).await?;
     
-    Ok(Json(UserWallet {
-        id: w.id, user_id: w.user_id, wallet_address: w.wallet_address,
-        label: w.label, is_primary: w.is_primary, verified: w.verified,
-        blockchain_registered: w.blockchain_registered, user_account_pda: w.user_account_pda,
-        shard_id: w.shard_id, blockchain_tx_signature: w.blockchain_tx_signature,
-        created_at: w.created_at,
-    }))
+    Ok(Json(map_user_wallet(w)))
 }
 
 #[utoipa::path(
     put,
-    path = "/api/v1/identity/wallets/{wallet_id}/primary",
+    path = "/api/v1/users/me/wallets/{wallet_id}/primary",
     params(("wallet_id" = Uuid, Path, description = "Wallet ID")),
     responses(
         (status = 200, description = "Primary wallet updated", body = UserWallet),
@@ -203,18 +190,12 @@ pub async fn set_primary_wallet(
     
     let w = auth_service.set_primary_wallet(claims.sub, wallet_id).await?;
     
-    Ok(Json(UserWallet {
-        id: w.id, user_id: w.user_id, wallet_address: w.wallet_address,
-        label: w.label, is_primary: w.is_primary, verified: w.verified,
-        blockchain_registered: w.blockchain_registered, user_account_pda: w.user_account_pda,
-        shard_id: w.shard_id, blockchain_tx_signature: w.blockchain_tx_signature,
-        created_at: w.created_at,
-    }))
+    Ok(Json(map_user_wallet(w)))
 }
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/identity/wallets/{wallet_id}",
+    path = "/api/v1/users/me/wallets/{wallet_id}",
     params(("wallet_id" = Uuid, Path, description = "Wallet ID")),
     responses(
         (status = 200, description = "Wallet unlinked", body = DeleteWalletResponse),

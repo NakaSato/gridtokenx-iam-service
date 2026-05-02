@@ -19,6 +19,7 @@ pub struct Event {
 }
 
 impl Event {
+    /// Creates a new domain event with the specified type and source.
     pub fn new(event_type: &str, source: &str) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -29,6 +30,7 @@ impl Event {
         }
     }
 
+    /// Attaches an arbitrary JSON payload to the event.
     pub fn with_data(mut self, data: serde_json::Value) -> Self {
         self.data = Some(data);
         self

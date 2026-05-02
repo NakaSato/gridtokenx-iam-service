@@ -60,6 +60,8 @@ mod tests {
             database_min_connections: 5,
             request_timeout_secs: 30,
             global_concurrency_limit: 100,
+            energy_token_mint: "GpGDVgksF2ivMv3XXR4VZDXRmW9G6agA2AGkKUBQRzk6".to_string(),
+            currency_token_mint: "8BGFtQLRaY9Nh5BGUwjJvdeXEsscCgJAi5zTgALk1Vg5".to_string(),
         })
     }
 

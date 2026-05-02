@@ -56,9 +56,8 @@ pub async fn register(
         id: response.id,
         username: response.username,
         email: response.email,
-        first_name: response.first_name,
-        last_name: response.last_name,
-        message: response.message,
+        status: "pending_verification".to_string(),
+        message: Some("Registration successful! Please verify your email.".to_string()),
     }))
 }
 
@@ -106,6 +105,7 @@ pub async fn login(
             first_name: response.user.first_name,
             last_name: response.user.last_name,
             wallet_address: response.user.wallet_address,
+            status: if response.user.is_active { "verified".to_string() } else { "pending_verification".to_string() },
         },
     }))
 }
@@ -156,6 +156,7 @@ pub async fn verify(
                 first_name: a.user.first_name,
                 last_name: a.user.last_name,
                 wallet_address: a.user.wallet_address,
+                status: if a.user.is_active { "verified".to_string() } else { "pending_verification".to_string() },
             },
         }),
     }))
@@ -196,6 +197,7 @@ pub async fn get_me(
         first_name: user.first_name,
         last_name: user.last_name,
         wallet_address: user.wallet_address,
+        status: if user.is_active { "verified".to_string() } else { "pending_verification".to_string() },
     }))
 }
 

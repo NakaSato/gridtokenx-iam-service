@@ -48,7 +48,7 @@ impl JwtService {
                     jsonwebtoken::errors::ErrorKind::InvalidSignature => {
                         ApiError::with_code(iam_core::error::ErrorCode::TokenInvalid, "Invalid token signature")
                     }
-                    _ => ApiError::Internal(format!("JWT decode error: {}", e)),
+                    _ => ApiError::with_code(iam_core::error::ErrorCode::TokenInvalid, format!("Invalid token: {}", e)),
                 }
             })
             .map(|data| data.claims)
