@@ -11,7 +11,6 @@ use async_trait::async_trait;
 #[cfg(test)]
 use uuid::Uuid;
 pub mod kafka;
-pub mod rabbitmq;
 
 use iam_core::traits::EventBusTrait;
 use iam_core::domain::identity::Event;
@@ -29,7 +28,6 @@ pub struct EventBus {
     conn: ConnectionManager,
     stream_name: String,
     pub kafka: Option<kafka::KafkaEventBus>,
-    pub rabbitmq: Option<rabbitmq::IamRabbitMQProducer>,
 }
 
 impl EventBus {
@@ -37,7 +35,6 @@ impl EventBus {
     pub async fn new(
         redis_url: &str,
         kafka_brokers: Option<String>,
-        rabbitmq_url: Option<String>,
     ) -> Result<Self> {
         let client = Client::open(redis_url)
             .context("Failed to create Redis client for EventBus")?;
@@ -59,23 +56,10 @@ impl EventBus {
             None
         };
 
-        let rabbitmq = if let Some(url) = rabbitmq_url {
-            match rabbitmq::IamRabbitMQProducer::new(&url).await {
-                Ok(r) => Some(r),
-                Err(e) => {
-                    warn!("Failed to initialize RabbitMQ Producer: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         Ok(Self {
             conn,
             stream_name: DEFAULT_STREAM.to_string(),
             kafka,
-            rabbitmq,
         })
     }
 

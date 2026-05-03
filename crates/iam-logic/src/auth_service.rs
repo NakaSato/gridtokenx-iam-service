@@ -11,7 +11,7 @@ use iam_core::domain::identity::{Claims, Role, AuthResult, RegistrationResult, V
 use iam_core::domain::identity::{User, UserWallet, UserType, UserWithHash};
 use iam_core::traits::{
     UserRepositoryTrait, WalletRepositoryTrait, ApiKeyRepositoryTrait,
-    CacheTrait, EmailTrait, EventBusTrait, BlockchainTrait
+    CacheTrait, EventBusTrait, BlockchainTrait
 };
 use iam_core::domain::identity::Event;
 
@@ -25,7 +25,6 @@ pub struct AuthService {
     api_key_service: ApiKeyService,
     pub cache: Arc<dyn CacheTrait>,
     event_bus: Arc<dyn EventBusTrait>,
-    email_service: Arc<dyn EmailTrait>,
     pub blockchain_service: Arc<dyn BlockchainTrait>,
     pub wallet_service: Arc<gridtokenx_blockchain_core::WalletService>,
     /// Semaphore to limit concurrent CPU-bound tasks (e.g. password hashing)
@@ -43,7 +42,6 @@ impl AuthService {
         api_key_service: ApiKeyService,
         cache: Arc<dyn CacheTrait>,
         event_bus: Arc<dyn EventBusTrait>,
-        email_service: Arc<dyn EmailTrait>,
         blockchain_service: Arc<dyn BlockchainTrait>,
         wallet_service: Arc<gridtokenx_blockchain_core::WalletService>,
     ) -> Self {
@@ -57,7 +55,6 @@ impl AuthService {
             api_key_service,
             cache,
             event_bus,
-            email_service,
             blockchain_service,
             wallet_service,
             cpu_semaphore,
@@ -570,11 +567,18 @@ impl AuthService {
         let key = iam_core::domain::identity::keys::cache::password_reset_token(&token);
         self.cache_set(&key, &email.to_lowercase(), Some(ttl_secs)).await?;
 
-        // Send reset email via Mailpit / SMTP
+        // ── Publish Event ──────────────────────────────────────────
         let reset_url = format!("{}/reset-password?token={}", self.config.app_base_url, token);
-        if let Err(e) = self.email_service.send_password_reset(email, &reset_url).await {
-            tracing::warn!("Failed to send password reset email to {}: {}", email, e);
+        
+        if let Some(user_with_hash) = self.user_repo.find_by_username_or_email(email).await? {
+            let event = Event::password_reset_requested(
+                &user_with_hash.user.id,
+                email,
+                &reset_url,
+            );
+            let _ = self.event_bus.publish(&event).await;
         }
+
         Ok(())
     }
 

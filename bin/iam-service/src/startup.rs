@@ -23,7 +23,7 @@ use iam_persistence::event_bus::EventBus;
 use iam_persistence::repository::{UserRepository, WalletRepository, ApiKeyRepository};
 use iam_core::traits::{
     UserRepositoryTrait, WalletRepositoryTrait, ApiKeyRepositoryTrait,
-    CacheTrait, EmailTrait, EventBusTrait
+    CacheTrait, EventBusTrait
 };
 
 /// Starts the IAM service with the provided configuration.
@@ -66,7 +66,6 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         EventBus::new(
             &config.redis_url,
             config.kafka_brokers.clone(),
-            config.rabbitmq_url.clone(),
         )
             .await
             .context("Failed to initialize identity event bus")?
@@ -98,11 +97,6 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         blockchain_service.transaction_handler.clone(),
     ));
 
-    let email_service: Arc<dyn EmailTrait> = Arc::new(
-        iam_persistence::email::EmailService::new(&config.smtp_host, config.smtp_port, &config.smtp_from)
-            .context("Failed to initialize email service")?
-    );
-
     let auth_service = AuthService::new(
         user_repo,
         wallet_repo,
@@ -112,7 +106,6 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         api_key_service,
         cache_service,
         event_bus,
-        email_service,
         blockchain_provider,
         wallet_service,
     );

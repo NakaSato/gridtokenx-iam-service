@@ -5,7 +5,7 @@ mod tests {
     use http_body_util::BodyExt;
     use iam_core::traits::{
         MockUserRepositoryTrait, MockWalletRepositoryTrait, MockApiKeyRepositoryTrait,
-        MockCacheTrait, MockEmailTrait, MockEventBusTrait, MockBlockchainTrait
+        MockCacheTrait, MockEventBusTrait, MockBlockchainTrait
     };
     use iam_core::config::Config;
     use iam_logic::AuthService;
@@ -95,7 +95,6 @@ mod tests {
             api_key_service,
             Arc::new(cache),
             Arc::new(event_bus),
-            Arc::new(MockEmailTrait::new()),
             Arc::new(MockBlockchainTrait::new()),
             mock_wallet_service(),
         );
@@ -177,7 +176,6 @@ mod tests {
             api_key_service,
             Arc::new(cache),
             Arc::new(event_bus),
-            Arc::new(MockEmailTrait::new()),
             Arc::new(MockBlockchainTrait::new()),
             mock_wallet_service(),
         );

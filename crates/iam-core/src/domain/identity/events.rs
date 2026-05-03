@@ -135,4 +135,14 @@ impl Event {
                 "shard_id": shard_id,
             }))
     }
+
+    /// User requested a password reset.
+    pub fn password_reset_requested(user_id: &Uuid, email: &str, reset_url: &str) -> Self {
+        Event::new("PasswordResetRequested", "gridtokenx-iam")
+            .with_data(serde_json::json!({
+                "user_id": user_id.to_string(),
+                "email": email,
+                "reset_url": reset_url,
+            }))
+    }
 }

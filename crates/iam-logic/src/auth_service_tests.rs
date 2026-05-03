@@ -3,7 +3,7 @@ use uuid::Uuid;
 use iam_core::domain::identity::{User, UserWithHash, Role};
 use iam_core::traits::{
     MockUserRepositoryTrait, MockWalletRepositoryTrait, MockApiKeyRepositoryTrait,
-    MockCacheTrait, MockEmailTrait, MockEventBusTrait, MockBlockchainTrait
+    MockCacheTrait, MockEventBusTrait, MockBlockchainTrait
 };
 use iam_core::config::Config;
 use crate::auth_service::AuthService;
@@ -64,7 +64,6 @@ async fn test_login_success() {
     let api_key_repo = MockApiKeyRepositoryTrait::new();
     let mut cache = MockCacheTrait::new();
     let mut event_bus = MockEventBusTrait::new();
-    let email_service = MockEmailTrait::new();
     let blockchain_service = MockBlockchainTrait::new();
     
     let config = mock_config();
@@ -141,7 +140,6 @@ async fn test_login_success() {
         api_key_service,
         Arc::new(cache),
         Arc::new(event_bus),
-        Arc::new(email_service),
         Arc::new(blockchain_service),
         wallet_service,
     );
@@ -157,7 +155,6 @@ async fn test_register_success() {
     let api_key_repo = MockApiKeyRepositoryTrait::new();
     let cache = MockCacheTrait::new();
     let mut event_bus = MockEventBusTrait::new();
-    let email_service = MockEmailTrait::new();
     let blockchain_service = MockBlockchainTrait::new();
 
     let config = mock_config();
@@ -187,7 +184,6 @@ async fn test_register_success() {
         api_key_service,
         Arc::new(cache),
         Arc::new(event_bus),
-        Arc::new(email_service),
         Arc::new(blockchain_service),
         wallet_service,
     );

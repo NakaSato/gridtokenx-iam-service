@@ -112,14 +112,6 @@ pub trait CacheTrait: Send + Sync {
     async fn exists(&self, key: &str) -> Result<bool>;
 }
 
-/// Trait for sending email notifications.
-#[async_trait]
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
-pub trait EmailTrait: Send + Sync {
-    /// Sends a password reset link to the specified email address.
-    async fn send_password_reset(&self, email: &str, reset_url: &str) -> Result<()>;
-}
-
 /// Trait for publishing domain events.
 #[async_trait]
 #[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
