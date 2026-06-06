@@ -16,6 +16,11 @@ pub struct UserRow {
     pub user_type: Option<String>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    /// PBKDF2 KDF version for the custodial wallet key (1 = 100k legacy,
+    /// 2 = 600k). Read here so a future lazy re-wrap on auth can decide via
+    /// `gridtokenx_blockchain_core::wallet::needs_rewrap`. Not surfaced in the
+    /// domain `User` yet — IAM does not exercise the custodial path today.
+    pub kdf_version: i16,
 }
 
 use async_trait::async_trait;
@@ -69,7 +74,7 @@ impl UserRepositoryTrait for UserRepository {
     async fn find_by_username_or_email(&self, identity: &str) -> Result<Option<UserWithHash>> {
         let row = sqlx::query_as::<_, UserRow>(
             "SELECT id, username, email, password_hash, role::text as role, first_name, last_name, wallet_address,
-                    blockchain_registered, user_type, latitude, longitude
+                    blockchain_registered, user_type, latitude, longitude, kdf_version
              FROM users
              WHERE (username = $1 OR email = $1) AND is_active = true
              LIMIT 1",
@@ -85,7 +90,7 @@ impl UserRepositoryTrait for UserRepository {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>> {
         let row = sqlx::query_as::<_, UserRow>(
             "SELECT id, username, email, password_hash, role::text as role, first_name, last_name, wallet_address,
-                    blockchain_registered, user_type, latitude, longitude
+                    blockchain_registered, user_type, latitude, longitude, kdf_version
              FROM users WHERE id = $1 AND is_active = true LIMIT 1",
         )
         .bind(id)
@@ -134,7 +139,7 @@ impl UserRepositoryTrait for UserRepository {
                  wallet_address = COALESCE(wallet_address, $2)
              WHERE email = $1
              RETURNING id, username, email, password_hash, role::text as role, first_name, last_name, wallet_address,
-                       blockchain_registered, user_type, latitude, longitude",
+                       blockchain_registered, user_type, latitude, longitude, kdf_version",
         )
         .bind(email)
         .bind(mock_wallet)
