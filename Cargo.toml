@@ -97,6 +97,7 @@ lettre = { version = "0.11", default-features = false, features = [
 ] }
 rustls = { version = "0.23", features = ["ring"] }
 gridtokenx-blockchain-core = { path = "../gridtokenx-blockchain-core" }
+gridtokenx-telemetry = { path = "../gridtokenx-telemetry" }
 
 connectrpc = { version = "0.2.1", features = ["axum", "server", "client"] }
 buffa = "0.2.0"

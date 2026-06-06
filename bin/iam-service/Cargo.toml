@@ -34,6 +34,7 @@ metrics-exporter-prometheus.workspace = true
 serde_json.workspace = true
 tokio-util.workspace = true
 gridtokenx-blockchain-core.workspace = true
+gridtokenx-telemetry.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 
