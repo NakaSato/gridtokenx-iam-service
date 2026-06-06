@@ -82,6 +82,9 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         governance_program_id: config.governance_program_id.clone(),
         energy_token_program_id: config.energy_token_program_id.clone(),
         trading_program_id: config.trading_program_id.clone(),
+        // trading_market_id unused by IAM (no trading path); blockchain-core added the
+        // field — default to empty so the initializer stays exhaustive.
+        ..Default::default()
     };
 
     let blockchain_service = Arc::new(gridtokenx_blockchain_core::BlockchainService::new(
