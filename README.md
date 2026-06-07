@@ -151,8 +151,8 @@ just test iam-service
 ---
 
 ## Related Code
-- **Service Root**: [main.rs](crates/iam-server/src/main.rs)
-- **Startup & DI**: [startup.rs](crates/iam-server/src/startup.rs)
+- **Service Root**: [main.rs](bin/iam-service/src/main.rs)
+- **Startup & DI**: [startup.rs](bin/iam-service/src/startup.rs)
 - **API Handlers**: [iam-api/handlers](crates/iam-api/src/handlers/)
 - **Core Business Logic**: [auth_service.rs](crates/iam-logic/src/auth_service.rs)
 - **Solana Registry Program**: [registry/lib.rs](../gridtokenx-anchor/programs/registry/src/lib.rs)
