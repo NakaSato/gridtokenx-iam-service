@@ -42,9 +42,9 @@ graph TD
 |-------|-------|----------------|
 | **[iam-service](file:///bin/iam-service)** | Adapter | Entry point, configuration loading, and **Dependency Injection** (orchestration of all layers). |
 | **[iam-api](file:///crates/iam-api)** | Adapter | ConnectRPC (gRPC) and REST (Axum) handlers. High-concurrency async edge. |
-| **[iam-logic](file:///crates/iam-logic)** | Domain | Core business rules: Auth orchestration, OTP verification, and blockchain provider logic. |
-| **[iam-persistence](file:///crates/iam-persistence)** | Infrastructure | Implementations for SQLx (PostgreSQL), Redis (Cache/Events), and SMTP (Email). |
-| **[iam-protocol](file:///crates/iam-protocol)** | Contract | Buffa-generated ConnectRPC definitions and domain-agnostic messaging types. |
+| **[iam-logic](file:///crates/iam-logic)** | Domain | Core business rules: `AuthService`, `JwtService`, `ApiKeyService`, password hashing, and blockchain provider logic. |
+| **[iam-persistence](file:///crates/iam-persistence)** | Infrastructure | Trait implementations: SQLx repos (user/wallet/api_key), Redis cache, and an event bus (Redis Streams + optional Kafka dual-write). |
+| **[iam-protocol](file:///crates/iam-protocol)** | Contract | `identity.proto` → codegen via `connectrpc-build`/`buffa-build` (`build.rs`). 7 RPC methods. |
 | **[iam-core](file:///crates/iam-core)** | Primitives | Domain models, **Trait definitions**, and shared error types. Zero-dependency heart. |
 
 ## 🛠️ Key Design Decisions
@@ -61,6 +61,24 @@ The Logic layer communicates with Infrastructure ONLY through traits defined in 
 - **Sync Core**: Domain models and simple logic are synchronous and deterministic.
 - **Async Edges**: I/O-bound operations (API handlers, Database workers) use Tokio's async runtime.
 - **Trait Resolution**: Async traits are used sparingly to avoid complex lifetime issues, favoring manual `BoxFuture` for performance-critical or cross-crate shared interfaces.
+
+## 🌐 Surfaces
+
+Both servers are wired in `bin/iam-service/src/startup.rs` and run concurrently with a shared `CancellationToken` for graceful shutdown.
+
+### REST (Axum) — `IAM_PORT` (4010)
+- `/api/v1/auth/{register,login,verify,forgot-password,reset-password}` — rate-limited auth flow.
+- `/api/v1/users/me`, `/api/v1/users/me/onchain-profile`, `/api/v1/users/me/wallets/*` — profile + wallet CRUD.
+- `/api/v1/system/config` — runtime config exposure.
+- `/metrics` (Prometheus), `/health`, `/health/ready` (checks Postgres + Redis), `/health/live`.
+
+### gRPC / ConnectRPC — `IAM_GRPC_PORT` (4020, `IAM_PORT + 10`)
+`IdentityService` (`proto/identity.proto`) — how Trading and gateways verify identities:
+`VerifyToken`, `Authorize`, `GetUserInfo`, `VerifyApiKey`, `RegisterUser`, `LinkWallet`, `InitializeUserWallet`.
+
+## 📡 Observability
+
+Telemetry (tracing / OTel) initializes via the shared **`gridtokenx-telemetry`** workspace crate, re-exported by the local `telemetry` module. `main.rs` calls `telemetry::init_telemetry("gridtokenx-iam")` before `startup::run`. Do not hand-roll a `tracing-subscriber` here — extend the shared crate.
 
 ## 🧪 Testing & Quality
 
@@ -92,7 +110,12 @@ pub trait BlockchainTrait: Send + Sync {
 This ensures guaranteed `dyn` compatibility and stable compilation across the modular monolith workspace.
 
 ### Safe Password Handling
-Passwords are never stored in plain text or logged. We use **Argon2id** (via `bcrypt` or specialized crates) for state-of-the-art hashing resistance.
+Passwords are never stored in plain text or logged.
+
+- **Primary algorithm**: **Argon2** (`argon2` crate) for all new hashes (`password.rs::hash_password`).
+- **Legacy verification**: `verify_password` also accepts legacy **Bcrypt** hashes so pre-migration credentials keep working.
+- **KDF versioning**: the `users.kdf_version` column tracks the key-derivation generation (`1` = legacy 100k PBKDF2, `2` = 600k), enabling transparent re-hash-on-login migration without forcing resets.
+- **CPU safety**: all hash/verify calls run on `spawn_blocking`, bounded by `AUTH_CPU_SEMAPHORE_LIMIT` (see Concurrency below).
 
 ## ⚡ Concurrency & CPU Safety
 

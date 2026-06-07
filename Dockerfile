@@ -18,6 +18,7 @@ WORKDIR /app
 # Copy the whole project to maintain structure for sqlx migrations
 COPY gridtokenx-iam-service/ gridtokenx-iam-service/
 COPY gridtokenx-blockchain-core/ gridtokenx-blockchain-core/
+COPY gridtokenx-telemetry/ gridtokenx-telemetry/
 
 WORKDIR /app/gridtokenx-iam-service
 
