@@ -66,3 +66,6 @@ criterion/
 tmp/
 temp/
 *.tmp
+
+# Local AI tooling
+.claude/
