@@ -267,15 +267,10 @@ impl AuthService {
                 .ok_or_else(|| ApiError::BadRequest("Invalid or expired verification token".to_string()))?
         };
 
-        let mut mock_wallet = "GtuQNK2t3B1xW95hUzr5NZ7XiWMpQTNxuApMPPKK9peT".to_string();
-        // Use a simple timestamp-based suffix that avoids invalid Base58 characters (0, O, I, l)
-        let suffix: String = uuid::Uuid::new_v4().to_string()[..8]
-            .chars()
-            .map(|c| if "0OI1".contains(c) { 'A' } else { c })
-            .collect();
-        mock_wallet.replace_range(36.., &suffix);
-
-        let user = self.user_repo.verify_email(&email, &mock_wallet).await?
+        // Verification only activates the account. The on-chain wallet address is
+        // set later when the user links a real primary wallet (see `link_wallet` /
+        // `set_primary_wallet`) — we no longer mint a throwaway placeholder here.
+        let user = self.user_repo.verify_email(&email).await?
             .ok_or_else(|| ApiError::NotFound("User not found".to_string()))?;
 
         // Generate token
@@ -289,11 +284,6 @@ impl AuthService {
             user.wallet_address.as_deref().unwrap_or(""),
         );
         let _ = self.event_bus.publish(&verify_event).await;
-
-        // Ensure wallet is in user_wallets table as primary
-        if let Some(addr) = &user.wallet_address {
-            let _ = self.wallet_repo.insert(user.id, addr, Some("Primary Wallet"), true).await;
-        }
 
         // Invalidate cache
         let profile_key_email = iam_core::domain::identity::keys::cache::user_profile(&user.email);
@@ -392,8 +382,11 @@ impl AuthService {
     }
 
     pub async fn set_primary_wallet(&self, user_id: Uuid, wallet_id: Uuid) -> Result<UserWallet> {
-        self.wallet_repo.set_primary(user_id, wallet_id).await?
-            .ok_or_else(|| ApiError::NotFound("Wallet not found".to_string()))
+        let wallet = self.wallet_repo.set_primary(user_id, wallet_id).await?
+            .ok_or_else(|| ApiError::NotFound("Wallet not found".to_string()))?;
+        // Keep users.wallet_address in sync with the primary wallet.
+        let _ = self.user_repo.set_wallet_address(user_id, &wallet.wallet_address).await;
+        Ok(wallet)
     }
 
     pub async fn unlink_wallet(&self, user_id: Uuid, wallet_id: Uuid) -> Result<()> {
@@ -425,6 +418,11 @@ impl AuthService {
 
         let mut wallet = self.wallet_repo.insert(user_id, &wallet_address, label.as_deref(), is_primary).await?;
 
+        // First wallet, or one flagged primary, becomes the user's on-chain address.
+        if is_primary || !has_existing {
+            let _ = self.user_repo.set_wallet_address(user_id, &wallet_address).await;
+        }
+
         // ── Auto On-Chain Registration ─────────────────────────────
         // If the user is already onboarded on-chain, register this new wallet automatically
         if let Ok(Some(user)) = self.user_repo.find_by_id(user_id).await {
@@ -455,7 +453,7 @@ impl AuthService {
                     // Derive PDA for return
                     let program_id: solana_sdk::pubkey::Pubkey = self.config.registry_program_id.parse().expect("Invalid registry program ID");
                     let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
-                        &[b"user_account", pubkey.as_ref()],
+                        &[b"user", pubkey.as_ref()],
                         &program_id
                     );
                     wallet.user_account_pda = Some(pda.to_string());
@@ -512,7 +510,7 @@ impl AuthService {
                 // Derive PDA for storage
                 let program_id: solana_sdk::pubkey::Pubkey = self.config.registry_program_id.parse().expect("Invalid registry program ID");
                 let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
-                    &[b"user_account", pubkey.as_ref()],
+                    &[b"user", pubkey.as_ref()],
                     &program_id
                 );
 

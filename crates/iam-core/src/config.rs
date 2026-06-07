@@ -148,10 +148,11 @@ impl Config {
             global_concurrency_limit: env::var("GLOBAL_CONCURRENCY_LIMIT")
                 .unwrap_or_else(|_| "100".to_string())
                 .parse()?,
-            energy_token_mint: env::var("ENERGY_TOKEN_MINT")
-                .unwrap_or_else(|_| "GpGDVgksF2ivMv3XXR4VZDXRmW9G6agA2AGkKUBQRzk6".to_string()),
-            currency_token_mint: env::var("CURRENCY_TOKEN_MINT")
-                .unwrap_or_else(|_| "8BGFtQLRaY9Nh5BGUwjJvdeXEsscCgJAi5zTgALk1Vg5".to_string()),
+            // No hard-coded fallback: a stale default is a phantom mint that does
+            // not exist on-chain and silently mis-routes clients. Empty = unset,
+            // surfaced via /system/config so misconfiguration is visible.
+            energy_token_mint: env::var("ENERGY_TOKEN_MINT").unwrap_or_default(),
+            currency_token_mint: env::var("CURRENCY_TOKEN_MINT").unwrap_or_default(),
         })
     }
 }

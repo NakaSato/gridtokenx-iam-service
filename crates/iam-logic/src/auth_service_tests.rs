@@ -198,3 +198,20 @@ async fn test_register_success() {
 
     assert_eq!(result.username, username);
 }
+
+/// Guards the registry UserAccount PDA seed against regression. The on-chain
+/// registry program derives the account with seeds `[b"user", authority]`; IAM
+/// once used `b"user_account"`, which produced a PDA that never existed on-chain.
+#[test]
+fn user_account_pda_uses_registry_seed() {
+    use solana_sdk::pubkey::Pubkey;
+    use std::str::FromStr;
+
+    let program = Pubkey::from_str("FcSd5x4X1nzJMKLZC4tMZXnQ1ipLrGsEfeoH8N4mvJX7").unwrap();
+    let wallet = Pubkey::from_str("2HznxvQihameZMgj4C2RoRAP9PJHnrSp3RzB7JtEgEky").unwrap();
+
+    let (pda, _) = Pubkey::find_program_address(&[b"user", wallet.as_ref()], &program);
+
+    // Value produced on-chain by the registry RegisterUser instruction.
+    assert_eq!(pda.to_string(), "2We19dA5Z8RNg9DR2QKwY1i7ac9dkojiWVDBrGG48SAM");
+}

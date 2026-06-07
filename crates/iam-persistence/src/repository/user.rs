@@ -130,24 +130,32 @@ impl UserRepositoryTrait for UserRepository {
         Ok(())
     }
 
-    async fn verify_email(&self, email: &str, mock_wallet: &str) -> Result<Option<User>> {
+    async fn verify_email(&self, email: &str) -> Result<Option<User>> {
         let row = sqlx::query_as::<_, UserRow>(
             "UPDATE users
              SET is_active = true,
                  email_verified = true,
-                 email_verified_at = NOW(),
-                 wallet_address = COALESCE(wallet_address, $2)
+                 email_verified_at = NOW()
              WHERE email = $1
              RETURNING id, username, email, password_hash, role::text as role, first_name, last_name, wallet_address,
                        blockchain_registered, user_type, latitude, longitude, kdf_version",
         )
         .bind(email)
-        .bind(mock_wallet)
         .fetch_optional(&self.pool)
         .await
         .map_err(ApiError::from)?;
 
         Ok(row.map(|r| r.into_domain()))
+    }
+
+    async fn set_wallet_address(&self, user_id: Uuid, address: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET wallet_address = $2 WHERE id = $1")
+            .bind(user_id)
+            .bind(address)
+            .execute(&self.pool)
+            .await
+            .map_err(ApiError::from)?;
+        Ok(())
     }
 
     async fn find_email_by_token(&self, token: &str) -> Result<Option<String>> {

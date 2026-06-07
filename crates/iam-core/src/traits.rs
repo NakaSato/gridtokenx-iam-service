@@ -32,8 +32,10 @@ pub trait UserRepositoryTrait: Send + Sync {
         last_name: Option<&str>,
         verification_token: Option<&str>,
     ) -> Result<()>;
-    /// Marks a user's email as verified and assigns a mock wallet.
-    async fn verify_email(&self, email: &str, mock_wallet: &str) -> Result<Option<User>>;
+    /// Marks a user's email as verified and activates the account.
+    async fn verify_email(&self, email: &str) -> Result<Option<User>>;
+    /// Sets the user's primary on-chain wallet address.
+    async fn set_wallet_address(&self, user_id: Uuid, address: &str) -> Result<()>;
     /// Finds the email address associated with a verification token.
     async fn find_email_by_token(&self, token: &str) -> Result<Option<String>>;
     /// Updates a user's password hash.
