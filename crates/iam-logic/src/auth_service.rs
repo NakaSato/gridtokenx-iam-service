@@ -505,34 +505,55 @@ impl AuthService {
         let h3_index = h3_index.unwrap_or(0);
         let shard_id = shard_id.unwrap_or(0);
 
+        // Derive the Registry PDA up front. A bad `registry_program_id` config is a
+        // fatal-but-fallible error, not a panic — parse before spending an on-chain
+        // transaction so a misconfig fails fast and wastes nothing.
+        let program_id: solana_sdk::pubkey::Pubkey = self.config.registry_program_id
+            .parse()
+            .map_err(|e| ApiError::Internal(format!("Invalid registry program ID: {e}")))?;
+        let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
+            &[b"user", pubkey.as_ref()],
+            &program_id,
+        );
+
         match self.blockchain_service.register_user_on_chain(pubkey, blockchain_user_type, lat_e7, long_e7, h3_index, shard_id).await {
             Ok(sig) => {
                 let sig_str = sig.to_string();
-                
-                // 1. Mark user as onboarded (persistence)
+
                 let user_type_str = match user_type_domain {
                     UserType::Prosumer => "Prosumer",
                     UserType::Consumer => "Consumer",
                 };
 
-                // Derive PDA for storage
-                let program_id: solana_sdk::pubkey::Pubkey = self.config.registry_program_id.parse().expect("Invalid registry program ID");
-                let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
-                    &[b"user", pubkey.as_ref()],
-                    &program_id
-                );
+                // The chain write is the source of truth and cannot be rolled back.
+                // If a DB mark fails we are in a drift state (on-chain registered, DB
+                // shows not) which makes a retry re-submit a tx the Registry program
+                // will reject. Do NOT swallow these errors: log loud with the
+                // signature + PDA for reconciliation, and flag it on the result.
+                let mut db_persisted = true;
 
-                let _ = self.user_repo.mark_user_onboarded(
+                if let Err(e) = self.user_repo.mark_user_onboarded(
                     user_id,
                     user_type_str,
                     lat_e7 as f64,
                     long_e7 as f64,
                     &pda.to_string(),
                     &sig_str,
-                ).await;
+                ).await {
+                    db_persisted = false;
+                    tracing::error!(
+                        user_id = %user_id, signature = %sig_str, pda = %pda,
+                        "DRIFT: on-chain onboarding succeeded but mark_user_onboarded failed: {e}. Manual reconciliation required."
+                    );
+                }
 
-                // 2. Mark this specific wallet as registered
-                let _ = self.wallet_repo.mark_registered(user_id, &wallet_address, &sig_str).await;
+                if let Err(e) = self.wallet_repo.mark_registered(user_id, &wallet_address, &sig_str).await {
+                    db_persisted = false;
+                    tracing::error!(
+                        user_id = %user_id, signature = %sig_str, wallet = %wallet_address,
+                        "DRIFT: on-chain onboarding succeeded but mark_registered failed: {e}. Manual reconciliation required."
+                    );
+                }
 
                 // ── Publish Event ──────────────────────────────────────────
                 let onboard_event = Event::user_onboarded(
@@ -547,7 +568,11 @@ impl AuthService {
 
                 Ok(OnChainOnboardingResult {
                     success: true,
-                    message: "User registered on-chain".to_string(),
+                    message: if db_persisted {
+                        "User registered on-chain".to_string()
+                    } else {
+                        "User registered on-chain; DB persistence lagged — reconciliation pending".to_string()
+                    },
                     transaction_signature: Some(sig_str),
                 })
             },
