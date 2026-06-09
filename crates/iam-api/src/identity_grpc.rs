@@ -11,7 +11,7 @@ use iam_logic::AuthService;
 pub use iam_protocol::identity;
 
 use identity::{TokenRequestView, AuthorizeRequestView, ApiKeyRequestView};
-use identity::{ApiKeyResponse, AuthorizeResponse, ClaimsResponse, UserInfoResponse};
+use identity::{ApiKeyResponse, AuthorizeResponse, ClaimsResponse, UserInfoResponse, GetUserWalletResponse};
 
 /// gRPC service implementation for the Identity service, using ConnectRPC.
 pub struct IdentityGrpcService {
@@ -223,6 +223,29 @@ impl identity::IdentityService for IdentityGrpcService {
                 ..Default::default()
             }, ctx)),
             Err(e) => Err(ConnectError::new(ErrorCode::Internal, format!("{}", e))),
+        }
+    }
+
+    async fn get_user_wallet(
+        &self,
+        ctx: Context,
+        request: OwnedView<identity::GetUserWalletRequestView<'static>>,
+    ) -> std::result::Result<(GetUserWalletResponse, Context), ConnectError> {
+        let role = self.extract_role(&ctx);
+        role.require_any(&[ServiceRole::AggregatorBridge, ServiceRole::ApiGateway, ServiceRole::Admin])
+            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
+
+        info!("🔑 gRPC: GetUserWallet request for user {}", request.user_id);
+
+        let user_id = uuid::Uuid::parse_str(request.user_id)
+            .map_err(|e| ConnectError::new(ErrorCode::InvalidArgument, format!("Invalid UUID: {}", e)))?;
+
+        match self.auth_service.get_primary_wallet_address(user_id).await {
+            Ok(wallet_address) => Ok((GetUserWalletResponse {
+                wallet_address,
+                ..Default::default()
+            }, ctx)),
+            Err(e) => Err(ConnectError::new(ErrorCode::NotFound, format!("{}", e))),
         }
     }
 

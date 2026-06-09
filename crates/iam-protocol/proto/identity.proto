@@ -23,6 +23,17 @@ service IdentityService {
 
   // Initializes a user's wallet on-chain
   rpc InitializeUserWallet (InitializeWalletRequest) returns (InitializeWalletResponse);
+
+  // Resolves a user's primary on-chain wallet address by user_id.
+  rpc GetUserWallet (GetUserWalletRequest) returns (GetUserWalletResponse);
+}
+
+message GetUserWalletRequest {
+  string user_id = 1;
+}
+
+message GetUserWalletResponse {
+  string wallet_address = 1;
 }
 
 message RegisterUserRequest {

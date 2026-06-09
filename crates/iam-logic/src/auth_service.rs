@@ -376,6 +376,14 @@ impl AuthService {
         self.wallet_repo.list_by_user_id(user_id).await
     }
 
+    /// Resolves a user's primary on-chain wallet address. Used by the
+    /// Aggregator Bridge (via gRPC `GetUserWallet`) to find the mint
+    /// recipient for generation settlement.
+    pub async fn get_primary_wallet_address(&self, user_id: Uuid) -> Result<String> {
+        self.wallet_repo.find_primary_address(user_id).await?
+            .ok_or_else(|| ApiError::NotFound("No primary wallet found".to_string()))
+    }
+
     pub async fn get_wallet(&self, user_id: Uuid, wallet_id: Uuid) -> Result<UserWallet> {
         self.wallet_repo.find_by_id_and_user_id(wallet_id, user_id).await?
             .ok_or_else(|| ApiError::NotFound("Wallet not found".to_string()))
