@@ -14,3 +14,6 @@ pub mod error_helpers;
 
 pub use identity_grpc::IdentityGrpcService;
 pub use error_helpers::handle_rejection;
+
+#[cfg(test)]
+mod identity_grpc_tests;
