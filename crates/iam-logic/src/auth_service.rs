@@ -65,6 +65,20 @@ impl AuthService {
     pub fn jwt_service(&self) -> &JwtService {
         &self.jwt_service
     }
+
+    /// Issues a fresh access token for an already-authenticated user.
+    ///
+    /// The caller must present a still-valid (non-expired) token — the
+    /// `AuthenticatedUser` extractor validates and rejects expired tokens before
+    /// this is reached. A new token is minted from the existing claims with a
+    /// fresh expiry. Note: expired tokens cannot be refreshed (decode rejects
+    /// them), so clients must refresh **proactively**, before expiry. Returns the
+    /// new token and its lifetime in seconds.
+    pub fn refresh_token(&self, claims: &Claims) -> Result<(String, i64)> {
+        let new_claims = Claims::new(claims.sub, claims.username.clone(), claims.role.clone());
+        let token = self.jwt_service.encode_token(&new_claims)?;
+        Ok((token, self.config.jwt_expiration))
+    }
 }
 
 impl AuthService {
@@ -415,7 +429,12 @@ impl AuthService {
         {
             Ok(sig) => {
                 let sig_str = sig.to_string();
-                let _ = self.wallet_repo.mark_registered(user.id, &wallet_address, &sig_str).await;
+                if let Err(e) = self.wallet_repo.mark_registered(user.id, &wallet_address, &sig_str).await {
+                    tracing::warn!(
+                        "mark_registered failed after on-chain register for wallet {} (user {}): {}",
+                        wallet_address, user.id, e
+                    );
+                }
 
                 let pda = self
                     .config
@@ -431,10 +450,23 @@ impl AuthService {
                         .to_string()
                     })
                     .unwrap_or_default();
-                let _ = self
+                if let Err(e) = self
                     .user_repo
-                    .mark_user_onboarded(user.id, user_type_str, 0.0, 0.0, &pda, &sig_str)
-                    .await;
+                    .mark_user_onboarded(
+                        user.id,
+                        user_type_str,
+                        user.latitude.unwrap_or(0.0),
+                        user.longitude.unwrap_or(0.0),
+                        &pda,
+                        &sig_str,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        "mark_user_onboarded failed after on-chain register for user {}: {}",
+                        user.id, e
+                    );
+                }
 
                 wallet.blockchain_registered = true;
                 wallet.blockchain_tx_signature = Some(sig_str);

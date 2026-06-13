@@ -68,6 +68,18 @@ pub struct AuthResponse {
     pub user: UserResponse,
 }
 
+/// Response for a token refresh — a fresh access token, no user payload
+/// (clients already hold the user object and only need to swap the token).
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RefreshResponse {
+    /// New JWT access token.
+    pub access_token: String,
+    /// Token expiration time in seconds.
+    pub expires_in: i64,
+    /// Token type — always `Bearer`.
+    pub token_type: String,
+}
+
 /// User profile information returned in API responses.
 #[derive(Debug, Serialize, Deserialize, ToSchema, Default)]
 pub struct UserResponse {

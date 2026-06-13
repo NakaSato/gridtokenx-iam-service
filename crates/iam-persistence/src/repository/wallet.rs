@@ -209,6 +209,15 @@ impl WalletRepositoryTrait for WalletRepository {
     ) -> Result<UserWallet> {
         let mut tx = self.pool.begin().await.map_err(ApiError::from)?;
 
+        // Demote any existing primary in the same tx so the new custodial wallet
+        // is the sole primary — guards trait correctness even if a caller skips
+        // the has-any-wallet precheck.
+        sqlx::query("UPDATE user_wallets SET is_primary = false WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::from)?;
+
         let row = sqlx::query_as::<_, UserWalletRow>(
             "INSERT INTO user_wallets (id, user_id, wallet_address, label, is_primary, verified, blockchain_registered)
              VALUES ($1, $2, $3, $4, true, false, false)

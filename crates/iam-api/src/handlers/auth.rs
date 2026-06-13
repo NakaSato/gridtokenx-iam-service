@@ -2,7 +2,7 @@ use gridtokenx_blockchain_core::auth::ServiceRole;
 use crate::handlers::types::{
     AuthResponse, LoginRequest, RegistrationRequest, RegistrationResponse, VerifyEmailResponse,
     UserResponse, ForgotPasswordRequest, ForgotPasswordResponse, ResendVerificationRequest,
-    ResetPasswordRequest, ResetPasswordResponse,
+    ResetPasswordRequest, ResetPasswordResponse, RefreshResponse,
     AuthenticatedUser,
 };
 #[cfg(test)]
@@ -108,6 +108,38 @@ pub async fn login(
             wallet_address: response.user.wallet_address,
             status: if response.user.is_active { "verified".to_string() } else { "pending_verification".to_string() },
         },
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/refresh",
+    responses(
+        (status = 200, description = "Token refreshed", body = RefreshResponse),
+        (status = 401, description = "Unauthorized - missing/expired token"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "auth",
+    security(("jwt" = []))
+)]
+#[instrument(skip(auth_service, auth))]
+pub async fn refresh(
+    role: ServiceRole,
+    auth: AuthenticatedUser,
+    State(auth_service): State<AuthService>,
+) -> ApiResult<Json<RefreshResponse>> {
+    // Same surface as the user-private routes: reached through the gateway.
+    role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+
+    // `auth` already proves the presented token is valid and unexpired.
+    let (access_token, expires_in) = auth_service.refresh_token(&auth.0)?;
+    metrics::record_auth_attempt("refresh", true);
+
+    Ok(Json(RefreshResponse {
+        access_token,
+        expires_in,
+        token_type: "Bearer".to_string(),
     }))
 }
 
