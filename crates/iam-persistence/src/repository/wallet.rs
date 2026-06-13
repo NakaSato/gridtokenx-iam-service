@@ -166,7 +166,15 @@ impl WalletRepositoryTrait for WalletRepository {
         .bind(is_primary)
         .fetch_one(&self.pool)
         .await
-        .map_err(ApiError::from)?;
+        .map_err(|e| match &e {
+            // A wallet address is globally unique. Re-linking one already on file is a
+            // client conflict (409), not a server fault (500) — map it explicitly so the
+            // raw DB error never leaks as an Internal error.
+            sqlx::Error::Database(db) if db.is_unique_violation() => {
+                ApiError::Conflict(format!("Wallet address {wallet_address} is already linked"))
+            }
+            _ => ApiError::from(e),
+        })?;
 
         Ok(row.into_domain())
     }

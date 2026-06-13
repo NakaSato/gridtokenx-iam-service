@@ -65,12 +65,12 @@ impl EventBus {
 
     /// Internal publish implementation
     async fn publish_raw(&self, event: &Event) -> Result<String> {
-        // 1. Dual-write to Kafka (Event Sourcing)
-        if let Some(kafka) = &self.kafka {
-            let _ = kafka.publish(event).await.map_err(|e| {
-                warn!("Kafka publish failed (non-critical): {}", e);
-            });
-        }
+        // 1. Dual-write to Kafka (Event Sourcing) — fire-and-forget.
+        // Kafka delivery is non-critical, but `producer.send` blocks up to
+        // `message.timeout.ms` (5s) when the broker is unreachable. Awaiting it
+        // here would add that latency to the request path (register/login/verify),
+        // so spawn it off-thread and let Redis remain the synchronous primary write.
+        self.spawn_kafka_publish(event);
 
         // 2. Legacy Redis Stream
         let payload = serde_json::to_string(event)
@@ -103,13 +103,27 @@ impl EventBus {
         Ok(entry_id)
     }
 
+    /// Spawn the Kafka dual-write on a background task so a slow/unreachable
+    /// broker never adds latency to (or fails) the caller's request.
+    fn spawn_kafka_publish(&self, event: &Event) {
+        if let Some(kafka) = &self.kafka {
+            let kafka = kafka.clone();
+            let event = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = kafka.publish(&event).await {
+                    warn!("Kafka publish failed (non-critical, async): {}", e);
+                }
+            });
+        }
+    }
+
     /// Publish multiple events atomically in a single pipeline.
     pub async fn publish_batch_raw(&self, events: &[Event]) -> Result<Vec<String>> {
-        // 1. Dual-write to Kafka
-        if let Some(kafka) = &self.kafka {
-            let _ = kafka.publish_batch(events).await.map_err(|e| {
-                warn!("Kafka batch publish failed (non-critical): {}", e);
-            });
+        // 1. Dual-write to Kafka — fire-and-forget (see `publish_raw`).
+        if self.kafka.is_some() {
+            for event in events {
+                self.spawn_kafka_publish(event);
+            }
         }
 
         let mut ids = Vec::with_capacity(events.len());

@@ -666,7 +666,8 @@ impl AuthService {
                     wallet.blockchain_tx_signature = Some(sig_str.clone());
                     
                     // Derive PDA for return
-                    let program_id: solana_sdk::pubkey::Pubkey = self.config.registry_program_id.parse().expect("Invalid registry program ID");
+                    let program_id: solana_sdk::pubkey::Pubkey = self.config.registry_program_id.parse()
+                        .map_err(|e| ApiError::Configuration(format!("Invalid registry program ID '{}': {e}", self.config.registry_program_id)))?;
                     let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
                         &[b"user", pubkey.as_ref()],
                         &program_id
