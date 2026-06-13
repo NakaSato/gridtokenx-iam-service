@@ -427,7 +427,7 @@ impl AuthService {
             .register_user_on_chain(pubkey, blockchain_user_type, 0, 0, 0, 0)
             .await
         {
-            Ok(sig) => {
+            Ok(sig) if self.confirm_user_registered(&pubkey).await => {
                 let sig_str = sig.to_string();
                 if let Err(e) = self.wallet_repo.mark_registered(user.id, &wallet_address, &sig_str).await {
                     tracing::warn!(
@@ -471,6 +471,15 @@ impl AuthService {
                 wallet.blockchain_registered = true;
                 wallet.blockchain_tx_signature = Some(sig_str);
                 wallet.user_account_pda = (!pda.is_empty()).then_some(pda);
+            }
+            Ok(_) => {
+                // Submitted but the user PDA never became observable — treat as
+                // unregistered (off-chain wallet still works; retry via
+                // InitializeUserWallet). Do NOT mark registered on an unconfirmed tx.
+                tracing::warn!(
+                    "On-chain registration submitted but not confirmed for custodial wallet {} (user {}) — leaving unregistered",
+                    wallet_address, user.id
+                );
             }
             Err(e) => {
                 tracing::warn!(
@@ -656,8 +665,16 @@ impl AuthService {
                 let lat = user.latitude.unwrap_or(0.0) as i32;
                 let long = user.longitude.unwrap_or(0.0) as i32;
 
-                // Register on-chain
+                // Register on-chain. Confirm the PDA landed before marking
+                // registered — the signature is returned optimistically.
                 if let Ok(sig) = self.blockchain_service.register_user_on_chain(pubkey, blockchain_user_type, lat, long, 0, 0).await {
+                    if !self.confirm_user_registered(&pubkey).await {
+                        tracing::warn!(
+                            "Auto-register on link submitted but not confirmed for wallet {} (user {}) — leaving unregistered",
+                            wallet_address, user_id
+                        );
+                        return Ok(wallet);
+                    }
                     let sig_str = sig.to_string();
                     let _ = self.wallet_repo.mark_registered(user_id, &wallet_address, &sig_str).await;
                     
@@ -688,6 +705,29 @@ impl AuthService {
         }
 
         Ok(wallet)
+    }
+
+    /// Confirm a user's on-chain registration landed before recording it.
+    ///
+    /// `register_user_on_chain` returns a signature optimistically — Chain
+    /// Bridge does not confirm execution, so a dropped or simulation-rejected tx
+    /// can masquerade as success. Derive the user PDA and poll until it is
+    /// observable on-chain (absorbing confirmation lag). Returns true only when
+    /// the account exists; callers MUST gate `mark_registered` /
+    /// `mark_user_onboarded` on this, or a failed tx is recorded as success.
+    async fn confirm_user_registered(&self, pubkey: &solana_sdk::pubkey::Pubkey) -> bool {
+        let program_id = match self.config.registry_program_id.parse::<solana_sdk::pubkey::Pubkey>() {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(&[b"user", pubkey.as_ref()], &program_id);
+        for _ in 0..5 {
+            if self.blockchain_service.account_exists(pda).await.unwrap_or(false) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        }
+        false
     }
 
     pub async fn onboard_user_on_chain(
@@ -724,14 +764,55 @@ impl AuthService {
             &program_id,
         );
 
+        let user_type_str = match user_type_domain {
+            UserType::Prosumer => "Prosumer",
+            UserType::Consumer => "Consumer",
+        };
+
+        // ── Idempotency ─────────────────────────────────────────────
+        // `register_user_on_chain` submits without confirming execution, and the
+        // provider-side retry can resubmit a tx that already landed — the Registry
+        // program then rejects the duplicate with AccountAlreadyInUse. If the user
+        // PDA already exists on-chain, registration is done: heal the DB flags and
+        // return without spending another transaction.
+        if self.blockchain_service.account_exists(pda).await.unwrap_or(false) {
+            let _ = self.user_repo.mark_user_onboarded(user_id, user_type_str, lat_e7 as f64, long_e7 as f64, &pda.to_string(), "preexisting-onchain").await;
+            let _ = self.wallet_repo.mark_registered(user_id, &wallet_address, "preexisting-onchain").await;
+            return Ok(OnChainOnboardingResult {
+                success: true,
+                message: "User already registered on-chain".to_string(),
+                transaction_signature: None,
+            });
+        }
+
         match self.blockchain_service.register_user_on_chain(pubkey, blockchain_user_type, lat_e7, long_e7, h3_index, shard_id).await {
             Ok(sig) => {
                 let sig_str = sig.to_string();
 
-                let user_type_str = match user_type_domain {
-                    UserType::Prosumer => "Prosumer",
-                    UserType::Consumer => "Consumer",
-                };
+                // ── Confirm the submit actually landed ───────────────────────
+                // The signature is returned optimistically (no execution
+                // confirmation), so a dropped or failed tx can masquerade as
+                // success. Only mark the user registered once the PDA is
+                // observable on-chain. Poll briefly to absorb confirmation lag.
+                let mut confirmed = false;
+                for _ in 0..5 {
+                    if self.blockchain_service.account_exists(pda).await.unwrap_or(false) {
+                        confirmed = true;
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                }
+                if !confirmed {
+                    tracing::error!(
+                        user_id = %user_id, signature = %sig_str, pda = %pda,
+                        "On-chain onboarding submitted but user PDA not observable — treating as unconfirmed, NOT marking registered"
+                    );
+                    return Ok(OnChainOnboardingResult {
+                        success: false,
+                        message: "On-chain registration submitted but not confirmed on-chain; please retry".to_string(),
+                        transaction_signature: Some(sig_str),
+                    });
+                }
 
                 // The chain write is the source of truth and cannot be rolled back.
                 // If a DB mark fails we are in a drift state (on-chain registered, DB
@@ -881,6 +962,13 @@ impl AuthService {
             .register_user_on_chain(pubkey, gridtokenx_blockchain_core::rpc::instructions::UserType::Consumer, 0, 0, 0, 0)
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?;
+
+        // Signature is optimistic — confirm the PDA landed before recording it.
+        if !self.confirm_user_registered(&pubkey).await {
+            return Err(ApiError::Internal(
+                "On-chain registration submitted but not confirmed on-chain; please retry".to_string(),
+            ));
+        }
 
         self.wallet_repo.mark_registered(user_id, wallet_address, &sig.to_string()).await?;
 

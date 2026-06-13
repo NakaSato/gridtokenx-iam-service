@@ -161,4 +161,12 @@ pub trait BlockchainTrait: Send + Sync {
         h3_index: u64,
         shard_id: u8,
     ) -> BoxFuture<'static, Result<Signature>>;
+
+    /// Returns whether an account exists on-chain (read via Chain Bridge).
+    ///
+    /// Used to make on-chain registration idempotent and to confirm a submit
+    /// actually landed: `register_user_on_chain` returns a signature
+    /// optimistically (no execution confirmation), so callers verify the
+    /// derived user PDA exists before treating registration as done.
+    fn account_exists(&self, pubkey: Pubkey) -> BoxFuture<'static, Result<bool>>;
 }

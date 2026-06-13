@@ -75,4 +75,12 @@ impl BlockchainTrait for BlockchainProvider {
             }
         }.boxed()
     }
+
+    fn account_exists(&self, pubkey: Pubkey) -> BoxFuture<'static, Result<bool>> {
+        let service = self.service.clone();
+        async move {
+            service.account_manager.account_exists(&pubkey).await
+                .map_err(|e| iam_core::error::ApiError::Internal(format!("Account existence check failed: {e}")))
+        }.boxed()
+    }
 }

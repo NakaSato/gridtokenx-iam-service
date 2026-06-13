@@ -296,6 +296,9 @@ async fn verify_email_provisions_custodial_wallet_preserves_location() {
         .returning(|_, _, _, _, _, _| {
             Box::pin(async move { Ok(solana_sdk::signature::Signature::default()) })
         });
+    // Registration is only recorded once the PDA is confirmed on-chain.
+    blockchain_service.expect_account_exists()
+        .returning(|_| Box::pin(async move { Ok(true) }));
     wallet_repo.expect_mark_registered()
         .returning(|_, _, _| Box::pin(async move { Ok(()) }));
 
