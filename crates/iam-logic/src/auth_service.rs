@@ -7,7 +7,7 @@ use crate::jwt_service::{JwtService, ApiKeyService};
 use crate::password::PasswordService;
 use iam_core::config::Config;
 use iam_core::error::{ApiError, Result};
-use iam_core::domain::identity::{Claims, Role, AuthResult, RegistrationResult, VerifyEmailResult, OnChainOnboardingResult, ApiKey};
+use iam_core::domain::identity::{Claims, Role, AuthResult, RegistrationResult, ResendVerificationResult, VerifyEmailResult, OnChainOnboardingResult, ApiKey};
 use iam_core::domain::identity::{User, UserWallet, UserType, UserWithHash};
 use iam_core::traits::{
     UserRepositoryTrait, WalletRepositoryTrait, ApiKeyRepositoryTrait,
@@ -240,9 +240,19 @@ impl AuthService {
             e
         })?;
 
-        let _ = self.event_bus.publish(&Event::user_registered(
+        if let Err(e) = self.event_bus.publish(&Event::user_registered(
             &user_id, &username, &email,
-        )).await;
+        )).await {
+            tracing::warn!("failed to publish UserRegistered event: {}", e);
+        }
+
+        // Hand the verification token to the notification service so it can
+        // send the click-to-verify email.
+        if let Err(e) = self.event_bus.publish(&Event::verification_email_requested(
+            &user_id, &username, &email, &verification_token,
+        )).await {
+            tracing::warn!("failed to publish VerificationEmailRequested event: {}", e);
+        }
 
         Ok(RegistrationResult {
             id: user_id,
@@ -260,18 +270,43 @@ impl AuthService {
     pub async fn verify_email(&self, token: String) -> Result<VerifyEmailResult> {
         info!("📧 Email verification attempt for token: {}", token);
 
-        let email = if token.starts_with("verify_") {
+        // The `verify_<email>` shortcut skips the DB token lookup entirely, so
+        // anyone who knows an email could activate the account and mint its
+        // custodial wallet. Permit it ONLY outside production (dev/test convenience
+        // for skipping the email round-trip); production always requires a real,
+        // server-issued token.
+        let dev_shortcut = !self.config.environment.eq_ignore_ascii_case("production");
+        let email = if dev_shortcut && token.starts_with("verify_") {
             token.trim_start_matches("verify_").to_string()
         } else {
             self.user_repo.find_email_by_token(&token).await?
                 .ok_or_else(|| ApiError::BadRequest("Invalid or expired verification token".to_string()))?
         };
 
-        // Verification only activates the account. The on-chain wallet address is
-        // set later when the user links a real primary wallet (see `link_wallet` /
-        // `set_primary_wallet`) — we no longer mint a throwaway placeholder here.
-        let user = self.user_repo.verify_email(&email).await?
+        let mut user = self.user_repo.verify_email(&email).await?
             .ok_or_else(|| ApiError::NotFound("User not found".to_string()))?;
+
+        // Auto-provision a custodial wallet so the user can trade immediately
+        // without bringing their own keypair. Failure must not block
+        // verification — the user can still link a wallet manually later.
+        let has_wallet = self.wallet_repo.has_any_wallet(user.id).await.unwrap_or_else(|e| {
+            // Fail safe: on a DB error assume a wallet exists so we never
+            // double-provision; surface the error so the blip is visible.
+            tracing::warn!("has_any_wallet check failed for user {}, skipping provisioning: {}", user.id, e);
+            true
+        });
+        if user.wallet_address.is_none() && !has_wallet {
+            match self.provision_custodial_wallet(&user).await {
+                Ok(wallet) => {
+                    info!("🪪 Provisioned custodial wallet {} for user {}", wallet.wallet_address, user.id);
+                    user.wallet_address = Some(wallet.wallet_address);
+                    user.blockchain_registered = wallet.blockchain_registered;
+                }
+                Err(e) => {
+                    tracing::warn!("Custodial wallet provisioning failed for user {}: {}", user.id, e);
+                }
+            }
+        }
 
         // Generate token
         let claims = Claims::new(user.id, user.username.clone(), user.role.clone());
@@ -280,6 +315,7 @@ impl AuthService {
         // ── Publish email verification event ─────────────────────────
         let verify_event = Event::email_verified(
             &user.id,
+            &user.username,
             &user.email,
             user.wallet_address.as_deref().unwrap_or(""),
         );
@@ -314,6 +350,145 @@ impl AuthService {
                 },
             }),
         })
+    }
+
+    /// Provisions a custodial Solana wallet for a freshly verified user:
+    /// generates a keypair, encrypts it under the service secrets
+    /// (AES-256-GCM, current KDF version), persists the key material, links
+    /// the address as the user's primary wallet, and best-effort registers
+    /// the user on-chain via Chain Bridge.
+    async fn provision_custodial_wallet(&self, user: &User) -> Result<UserWallet> {
+        use base64::Engine as _;
+        use gridtokenx_blockchain_core::wallet::CURRENT_KDF_VERSION;
+        use solana_sdk::signature::Signer as _;
+
+        let keypair = gridtokenx_blockchain_core::WalletService::create_keypair();
+        let pubkey = keypair.pubkey();
+        let wallet_address = pubkey.to_string();
+
+        // Encrypt the full 64-byte keypair (same layout as a Solana wallet
+        // file) under the service secrets. No user password is involved —
+        // custody is service-side by design so IAM can sign on the user's
+        // behalf.
+        let (enc_b64, salt_b64, iv_b64) =
+            gridtokenx_blockchain_core::WalletService::encrypt_private_key_versioned(
+                CURRENT_KDF_VERSION,
+                &self.config.encryption_secret,
+                &self.config.master_secret,
+                &keypair.to_bytes(),
+            )
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let encrypted = b64.decode(&enc_b64).map_err(|e| ApiError::internal(e.to_string()))?;
+        let salt = b64.decode(&salt_b64).map_err(|e| ApiError::internal(e.to_string()))?;
+        let iv = b64.decode(&iv_b64).map_err(|e| ApiError::internal(e.to_string()))?;
+
+        // Insert the wallet row and write the key material + primary address in a
+        // single DB transaction: a key without a wallet (or an address without a
+        // recoverable key) must never be observable, even across a crash.
+        let mut wallet = self
+            .wallet_repo
+            .persist_custodial_wallet(
+                user.id,
+                &wallet_address,
+                Some("Custodial"),
+                &encrypted,
+                &salt,
+                &iv,
+                i16::from(CURRENT_KDF_VERSION),
+            )
+            .await?;
+
+        // ── Best-effort on-chain registration (Registry PDA) ──────────
+        // Chain Bridge / validator may be down in dev; the wallet still works
+        // off-chain and registration can be retried via InitializeUserWallet.
+        let user_type = user.user_type.unwrap_or(UserType::Consumer);
+        let (blockchain_user_type, user_type_str) = match user_type {
+            UserType::Prosumer => (gridtokenx_blockchain_core::rpc::instructions::UserType::Prosumer, "Prosumer"),
+            UserType::Consumer => (gridtokenx_blockchain_core::rpc::instructions::UserType::Consumer, "Consumer"),
+        };
+        match self
+            .blockchain_service
+            .register_user_on_chain(pubkey, blockchain_user_type, 0, 0, 0, 0)
+            .await
+        {
+            Ok(sig) => {
+                let sig_str = sig.to_string();
+                let _ = self.wallet_repo.mark_registered(user.id, &wallet_address, &sig_str).await;
+
+                let pda = self
+                    .config
+                    .registry_program_id
+                    .parse::<solana_sdk::pubkey::Pubkey>()
+                    .ok()
+                    .map(|program_id| {
+                        solana_sdk::pubkey::Pubkey::find_program_address(
+                            &[b"user", pubkey.as_ref()],
+                            &program_id,
+                        )
+                        .0
+                        .to_string()
+                    })
+                    .unwrap_or_default();
+                let _ = self
+                    .user_repo
+                    .mark_user_onboarded(user.id, user_type_str, 0.0, 0.0, &pda, &sig_str)
+                    .await;
+
+                wallet.blockchain_registered = true;
+                wallet.blockchain_tx_signature = Some(sig_str);
+                wallet.user_account_pda = (!pda.is_empty()).then_some(pda);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "On-chain registration failed for custodial wallet {} (user {}): {}",
+                    wallet_address, user.id, e
+                );
+            }
+        }
+
+        Ok(wallet)
+    }
+
+    /// Re-sends the verification email for an unverified account.
+    ///
+    /// Always reports success for unknown emails to avoid account enumeration.
+    pub async fn resend_verification(&self, email: &str) -> Result<ResendVerificationResult> {
+        info!("📧 Verification email resend requested");
+
+        let sent = ResendVerificationResult {
+            status: "sent".to_string(),
+            message: "If that email is registered and unverified, a new verification email has been sent".to_string(),
+        };
+
+        let Some(state) = self.user_repo.find_verification_state_by_email(email).await? else {
+            return Ok(sent);
+        };
+
+        // Already-verified accounts return the SAME generic response as unknown
+        // emails — never expose that the address exists+is verified, or this
+        // endpoint becomes an account-enumeration oracle. Just don't re-send.
+        if state.email_verified {
+            return Ok(sent);
+        }
+
+        let token = match state.verification_token {
+            Some(token) => token,
+            None => {
+                let token = Uuid::new_v4().to_string();
+                self.user_repo.set_verification_token(state.user_id, &token).await?;
+                token
+            }
+        };
+
+        if let Err(e) = self.event_bus.publish(&Event::verification_email_requested(
+            &state.user_id, &state.username, email, &token,
+        )).await {
+            tracing::warn!("failed to publish VerificationEmailRequested event: {}", e);
+        }
+
+        Ok(sent)
     }
 
     pub async fn verify_api_key(&self, key: &str) -> Result<ApiKey> {

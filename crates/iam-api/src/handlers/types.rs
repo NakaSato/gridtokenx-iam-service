@@ -257,6 +257,13 @@ pub struct DeleteWalletResponse {
     pub message: String,
 }
 
+/// Request to re-send the email-verification message.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ResendVerificationRequest {
+    /// User email address.
+    pub email: String,
+}
+
 /// Request to initiate password reset.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ForgotPasswordRequest {

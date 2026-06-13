@@ -196,4 +196,54 @@ impl WalletRepositoryTrait for WalletRepository {
 
         Ok(())
     }
+
+    async fn persist_custodial_wallet(
+        &self,
+        user_id: Uuid,
+        wallet_address: &str,
+        label: Option<&str>,
+        encrypted_private_key: &[u8],
+        wallet_salt: &[u8],
+        encryption_iv: &[u8],
+        kdf_version: i16,
+    ) -> Result<UserWallet> {
+        let mut tx = self.pool.begin().await.map_err(ApiError::from)?;
+
+        let row = sqlx::query_as::<_, UserWalletRow>(
+            "INSERT INTO user_wallets (id, user_id, wallet_address, label, is_primary, verified, blockchain_registered)
+             VALUES ($1, $2, $3, $4, true, false, false)
+             RETURNING id, user_id, wallet_address, label, is_primary, verified, blockchain_registered,
+                       user_account_pda, shard_id, blockchain_tx_signature, created_at",
+        )
+        .bind(Uuid::new_v4())
+        .bind(user_id)
+        .bind(wallet_address)
+        .bind(label)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(ApiError::from)?;
+
+        sqlx::query(
+            "UPDATE users
+             SET encrypted_private_key = $2,
+                 wallet_salt = $3,
+                 encryption_iv = $4,
+                 kdf_version = $5,
+                 wallet_address = $6
+             WHERE id = $1",
+        )
+        .bind(user_id)
+        .bind(encrypted_private_key)
+        .bind(wallet_salt)
+        .bind(encryption_iv)
+        .bind(kdf_version)
+        .bind(wallet_address)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::from)?;
+
+        tx.commit().await.map_err(ApiError::from)?;
+
+        Ok(row.into_domain())
+    }
 }

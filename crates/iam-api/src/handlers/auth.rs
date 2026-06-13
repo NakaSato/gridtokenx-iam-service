@@ -1,7 +1,8 @@
 use gridtokenx_blockchain_core::auth::ServiceRole;
 use crate::handlers::types::{
     AuthResponse, LoginRequest, RegistrationRequest, RegistrationResponse, VerifyEmailResponse,
-    UserResponse, ForgotPasswordRequest, ForgotPasswordResponse, ResetPasswordRequest, ResetPasswordResponse,
+    UserResponse, ForgotPasswordRequest, ForgotPasswordResponse, ResendVerificationRequest,
+    ResetPasswordRequest, ResetPasswordResponse,
     AuthenticatedUser,
 };
 #[cfg(test)]
@@ -199,6 +200,28 @@ pub async fn get_me(
         wallet_address: user.wallet_address,
         status: if user.is_active { "verified".to_string() } else { "pending_verification".to_string() },
     }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/resend-verification",
+    request_body = ResendVerificationRequest,
+    responses(
+        (status = 200, description = "Generic acknowledgement — identical whether the email is unknown, unverified, or already verified (anti-enumeration)", body = iam_core::domain::identity::ResendVerificationResult),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "auth"
+)]
+pub async fn resend_verification(
+    role: ServiceRole,
+    State(auth_service): State<AuthService>,
+    Json(request): Json<ResendVerificationRequest>,
+) -> ApiResult<Json<iam_core::domain::identity::ResendVerificationResult>> {
+    role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin, ServiceRole::Unknown])
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+
+    let result = auth_service.resend_verification(request.email.trim()).await?;
+    Ok(Json(result))
 }
 
 #[utoipa::path(

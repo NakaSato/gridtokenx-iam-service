@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use uuid::Uuid;
 use crate::error::Result;
-use crate::domain::identity::{User, UserWallet, ApiKey, UserWithHash};
+use crate::domain::identity::{User, UserWallet, ApiKey, UserWithHash, EmailVerificationState};
 use serde_json::Value;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
@@ -38,6 +38,14 @@ pub trait UserRepositoryTrait: Send + Sync {
     async fn set_wallet_address(&self, user_id: Uuid, address: &str) -> Result<()>;
     /// Finds the email address associated with a verification token.
     async fn find_email_by_token(&self, token: &str) -> Result<Option<String>>;
+    /// Looks up a user's email-verification state by email, including
+    /// inactive (not yet verified) accounts.
+    async fn find_verification_state_by_email(
+        &self,
+        email: &str,
+    ) -> Result<Option<EmailVerificationState>>;
+    /// Replaces the user's email-verification token.
+    async fn set_verification_token(&self, user_id: Uuid, token: &str) -> Result<()>;
     /// Updates a user's password hash.
     async fn update_password(&self, email: &str, password_hash: &str) -> Result<u64>;
     /// Marks a user as successfully onboarded on the blockchain.
@@ -84,6 +92,22 @@ pub trait WalletRepositoryTrait: Send + Sync {
     async fn find_primary_address(&self, user_id: Uuid) -> Result<Option<String>>;
     /// Marks a wallet as registered on-chain with a transaction signature.
     async fn mark_registered(&self, user_id: Uuid, address: &str, signature: &str) -> Result<()>;
+    /// Atomically persists a freshly provisioned custodial wallet: inserts the
+    /// `user_wallets` row and writes the encrypted key material + primary
+    /// wallet address onto the `users` row in a single transaction. Either all
+    /// of it lands or none — a crash can never leave a stored key with no
+    /// wallet row, or a wallet address with no recoverable key.
+    #[allow(clippy::too_many_arguments)]
+    async fn persist_custodial_wallet(
+        &self,
+        user_id: Uuid,
+        wallet_address: &str,
+        label: Option<&str>,
+        encrypted_private_key: &[u8],
+        wallet_salt: &[u8],
+        encryption_iv: &[u8],
+        kdf_version: i16,
+    ) -> Result<UserWallet>;
 }
 
 /// Trait for API key data access and lifecycle management.

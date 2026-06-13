@@ -11,7 +11,7 @@ use anyhow::Context;
 use iam_core::config::Config;
 use gridtokenx_blockchain_core::auth::ServiceRole;
 
-use iam_api::handlers::auth::{login, register, verify, get_me, forgot_password, reset_password};
+use iam_api::handlers::auth::{login, register, verify, get_me, forgot_password, resend_verification, reset_password};
 use iam_api::handlers::system::get_config;
 use iam_api::identity_grpc::{
     IdentityGrpcService, identity::IdentityServiceExt,
@@ -118,6 +118,7 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
         .route("/register", post(register))
         .route("/login", post(login))
         .route("/verify", axum::routing::get(verify))
+        .route("/resend-verification", post(resend_verification))
         .route("/forgot-password", post(forgot_password))
         .route("/reset-password", post(reset_password))
         .layer(middleware::from_fn_with_state(auth_service.clone(), iam_api::middleware::rate_limit::rate_limit_middleware));

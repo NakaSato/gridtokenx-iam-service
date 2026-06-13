@@ -17,15 +17,16 @@ pub struct UserRow {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     /// PBKDF2 KDF version for the custodial wallet key (1 = 100k legacy,
-    /// 2 = 600k). Read here so a future lazy re-wrap on auth can decide via
-    /// `gridtokenx_blockchain_core::wallet::needs_rewrap`. Not surfaced in the
-    /// domain `User` yet — IAM does not exercise the custodial path today.
+    /// 2 = 600k). Custodial keys are written on email verification
+    /// (`AuthService::provision_custodial_wallet`) under
+    /// `gridtokenx_blockchain_core::wallet::CURRENT_KDF_VERSION`; read here so
+    /// a future lazy re-wrap can decide via `needs_rewrap`.
     pub kdf_version: i16,
 }
 
 use async_trait::async_trait;
 use iam_core::traits::UserRepositoryTrait;
-use iam_core::domain::identity::{User, UserWithHash, UserType};
+use iam_core::domain::identity::{User, UserWithHash, UserType, EmailVerificationState};
 
 impl UserRow {
     pub fn into_domain(self) -> User {
@@ -113,8 +114,11 @@ impl UserRepositoryTrait for UserRepository {
         verification_token: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO users (id, username, email, password_hash, role, first_name, last_name, is_active, email_verification_token)
-             VALUES ($1, $2, $3, $4, $5::text::user_role, $6, $7, false, $8)",
+            "INSERT INTO users (id, username, email, password_hash, role, first_name, last_name, is_active,
+                                email_verification_token, email_verification_sent_at, email_verification_expires_at)
+             VALUES ($1, $2, $3, $4, $5::text::user_role, $6, $7, false, $8,
+                     CASE WHEN $8 IS NULL THEN NULL ELSE NOW() END,
+                     CASE WHEN $8 IS NULL THEN NULL ELSE NOW() + INTERVAL '24 hours' END)",
         )
         .bind(id)
         .bind(username)
@@ -160,7 +164,10 @@ impl UserRepositoryTrait for UserRepository {
 
     async fn find_email_by_token(&self, token: &str) -> Result<Option<String>> {
         let row = sqlx::query_scalar::<_, String>(
-            "SELECT email FROM users WHERE email_verification_token = $1 LIMIT 1",
+            "SELECT email FROM users
+             WHERE email_verification_token = $1
+               AND email_verification_expires_at > NOW()
+             LIMIT 1",
         )
         .bind(token)
         .fetch_optional(&self.pool)
@@ -168,6 +175,49 @@ impl UserRepositoryTrait for UserRepository {
         .map_err(ApiError::from)?;
 
         Ok(row)
+    }
+
+    async fn find_verification_state_by_email(
+        &self,
+        email: &str,
+    ) -> Result<Option<EmailVerificationState>> {
+        let row = sqlx::query_as::<_, (Uuid, String, bool, Option<String>)>(
+            // An expired token is surfaced as NULL so the resend flow mints a
+            // fresh one instead of re-sending a dead link.
+            "SELECT id, username, email_verified,
+                    CASE WHEN email_verification_expires_at > NOW()
+                         THEN email_verification_token ELSE NULL END
+             FROM users WHERE lower(email) = lower($1) LIMIT 1",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(ApiError::from)?;
+
+        Ok(row.map(|(user_id, username, email_verified, verification_token)| {
+            EmailVerificationState {
+                user_id,
+                username,
+                email_verified,
+                verification_token,
+            }
+        }))
+    }
+
+    async fn set_verification_token(&self, user_id: Uuid, token: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE users
+             SET email_verification_token = $2,
+                 email_verification_sent_at = NOW(),
+                 email_verification_expires_at = NOW() + INTERVAL '24 hours'
+             WHERE id = $1",
+        )
+            .bind(user_id)
+            .bind(token)
+            .execute(&self.pool)
+            .await
+            .map_err(ApiError::from)?;
+        Ok(())
     }
 
     async fn update_password(&self, email: &str, password_hash: &str) -> Result<u64> {

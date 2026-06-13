@@ -107,6 +107,45 @@ pub struct RegistrationResult {
     pub message: String,
 }
 
+/// Email-verification state of a user, regardless of account activation.
+/// Used by the resend-verification flow, which must see inactive accounts.
+#[derive(Clone)]
+pub struct EmailVerificationState {
+    /// Unique user ID.
+    pub user_id: Uuid,
+    /// Unique username.
+    pub username: String,
+    /// Whether the email address has been verified.
+    pub email_verified: bool,
+    /// Pending verification token, if one exists.
+    pub verification_token: Option<String>,
+}
+
+// Manual `Debug` that redacts `verification_token` — it grants account
+// activation and must never land in logs or error traces.
+impl std::fmt::Debug for EmailVerificationState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmailVerificationState")
+            .field("user_id", &self.user_id)
+            .field("username", &self.username)
+            .field("email_verified", &self.email_verified)
+            .field("verification_token", &self.verification_token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+/// ResendVerificationResult contains the outcome of a resend-verification request.
+/// The response is intentionally constant (`status = "sent"`) regardless of
+/// whether the email is unknown, unverified, or already verified, to avoid
+/// account enumeration.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ResendVerificationResult {
+    /// Machine-readable status: always `sent`.
+    pub status: String,
+    /// Status message.
+    pub message: String,
+}
+
 /// VerifyEmailResult contains the result of an email verification.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct VerifyEmailResult {

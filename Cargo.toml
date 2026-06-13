@@ -90,6 +90,7 @@ solana-sdk = "2.1.0"
 sha2 = "0.10"
 rand = "0.8"
 bs58 = "0.5"
+base64 = "0.21"
 lettre = { version = "0.11", default-features = false, features = [
     "smtp-transport",
     "tokio1-rustls-tls",

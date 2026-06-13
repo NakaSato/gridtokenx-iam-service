@@ -60,11 +60,29 @@ impl Event {
             }))
     }
 
+    /// Verification email requested — carries the email-verification token so
+    /// the notification service can build the click-to-verify link.
+    pub fn verification_email_requested(
+        user_id: &Uuid,
+        username: &str,
+        email: &str,
+        token: &str,
+    ) -> Self {
+        Event::new("VerificationEmailRequested", "gridtokenx-iam")
+            .with_data(serde_json::json!({
+                "user_id": user_id.to_string(),
+                "username": username,
+                "email": email,
+                "token": token,
+            }))
+    }
+
     /// User email verified.
-    pub fn email_verified(user_id: &Uuid, email: &str, wallet_address: &str) -> Self {
+    pub fn email_verified(user_id: &Uuid, username: &str, email: &str, wallet_address: &str) -> Self {
         Event::new("EmailVerified", "gridtokenx-iam")
             .with_data(serde_json::json!({
                 "user_id": user_id.to_string(),
+                "username": username,
                 "email": email,
                 "wallet_address": wallet_address,
             }))

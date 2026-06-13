@@ -67,7 +67,7 @@ The Logic layer communicates with Infrastructure ONLY through traits defined in 
 Both servers are wired in `bin/iam-service/src/startup.rs` and run concurrently with a shared `CancellationToken` for graceful shutdown.
 
 ### REST (Axum) — `IAM_PORT` (4010)
-- `/api/v1/auth/{register,login,verify,forgot-password,reset-password}` — rate-limited auth flow.
+- `/api/v1/auth/{register,login,verify,resend-verification,forgot-password,reset-password}` — rate-limited auth flow. `verify` also auto-provisions a custodial Solana wallet (keypair encrypted via `gridtokenx-blockchain-core` `WalletService`, stored on `users`; best-effort on-chain Registry registration through Chain Bridge).
 - `/api/v1/users/me`, `/api/v1/users/me/onchain-profile`, `/api/v1/users/me/wallets/*` — profile + wallet CRUD.
 - `/api/v1/system/config` — runtime config exposure.
 - `/metrics` (Prometheus), `/health`, `/health/ready` (checks Postgres + Redis), `/health/live`.
