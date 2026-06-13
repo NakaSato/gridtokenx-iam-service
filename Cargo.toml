@@ -116,3 +116,11 @@ axum-test = "16.4.0"
 # Build dependencies
 buffa-build = "0.2.0"
 connectrpc-build = "0.2.0"
+
+# Optimize third-party crates even in dev/debug builds. Our own crates stay
+# unoptimized for fast incremental compiles + debuggability, but the custodial
+# wallet KDF (pbkdf2 600k iters, v2) is ~50s unoptimized — past the e2e HTTP
+# timeout on the verify path. opt-level=3 on deps brings it back to sub-second
+# without weakening the iteration count.
+[profile.dev.package."*"]
+opt-level = 3

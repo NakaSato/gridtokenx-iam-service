@@ -721,11 +721,13 @@ impl AuthService {
             Err(_) => return false,
         };
         let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(&[b"user", pubkey.as_ref()], &program_id);
-        for _ in 0..5 {
+        // ~15s window: Chain Bridge reads at `confirmed` (~1-2s) but the
+        // provider-side retry can land the tx several seconds after the call returns.
+        for _ in 0..20 {
             if self.blockchain_service.account_exists(pda).await.unwrap_or(false) {
                 return true;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         }
         false
     }
@@ -794,13 +796,16 @@ impl AuthService {
                 // confirmation), so a dropped or failed tx can masquerade as
                 // success. Only mark the user registered once the PDA is
                 // observable on-chain. Poll briefly to absorb confirmation lag.
+                // Poll up to ~15s: Chain Bridge reads at `confirmed` (~1-2s) but the
+                // provider-side retry loop can resubmit before returning, so the
+                // landing tx may be several seconds behind the returned signature.
                 let mut confirmed = false;
-                for _ in 0..5 {
+                for _ in 0..20 {
                     if self.blockchain_service.account_exists(pda).await.unwrap_or(false) {
                         confirmed = true;
                         break;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(750)).await;
                 }
                 if !confirmed {
                     tracing::error!(
