@@ -62,10 +62,12 @@ Never reverse. `iam-core` is the zero-I/O heart: domain models (`domain/identity
 
 ## Surfaces
 
-- **REST** on `IAM_PORT` (bare-metal default 4010): `/api/v1/auth/{register,login,verify,resend-verification,forgot-password,reset-password}` (rate-limited), `/api/v1/users/me[/wallets…]`, `/api/v1/system/config`, `/health`, `/health/ready` (checks Postgres + Redis), `/health/live`, `/metrics` (Prometheus).
+- **REST** on `IAM_PORT` (bare-metal default 4010): `/api/v1/auth/{register,login,verify,resend-verification,forgot-password,reset-password}` (rate-limited), `/api/v1/me[/registration,/wallets…]` (wallet primary set via `PATCH /api/v1/me/wallets/{id}` `{"is_primary":true}`), `/api/v1/system/config`, `/health`, `/health/ready` (checks Postgres + Redis), `/health/live`, `/metrics` (Prometheus).
+  - **User-self base is `/api/v1/me`** (platform convention; migrated from `/api/v1/users/me`, `/onchain-profile`→`/registration`, primary `PUT .../primary`→`PATCH .../wallets/{id}`). Sibling owners under the same base are gateway-rewritten to their services: Trading `/api/v1/me/{orders,trades,futures,analytics,transactions,carbon}` + `/me/wallets/*/balance`, Noti `/api/v1/me/notifications/*`, Meter `/api/v1/me/meters`. IAM's gateway route is **explicit paths, not a `/me/*` catch-all**, and carve-outs use higher APISIX `priority` so they aren't swallowed.
+  - **System/ops surface is private.** `/api/v1/system/config`, `/health`, `/metrics` are gated to internal CIDRs (`127.0.0.1/32`,`10/8`,`172.16/12`,`192.168/16`) via `ip-restriction` at the APISIX gateway — not reachable from the public internet. Prometheus scrapes the container directly on the private net.
 - **gRPC/ConnectRPC** on `IAM_GRPC_PORT` (bare-metal default 4020, defaults to `IAM_PORT + 10`): `IdentityService` — full RPC set is `VerifyToken`, `Authorize`, `GetUserInfo`, `VerifyApiKey`, `RegisterUser`, `LinkWallet`, `InitializeUserWallet`, `GetUserWallet`. This is how Trading/gateways verify identities. Contract: `crates/iam-protocol/proto/identity.proto`.
   - **Port map differs in Docker.** The compose env forces `IAM_PORT=8080`/`IAM_GRPC_PORT=8090` *inside* the container; `docker-compose.yml` then publishes host `4010→8080` (REST) and `${IAM_GRPC_PORT:-5010}→8090` (gRPC). So against the running stack, callers hit **host `:5010`** or container DNS **`gridtokenx-iam-service:8090`** for gRPC — not 4020. (APISIX upstream is configured exactly so: `iam-service:8090` + `host.docker.internal:5010`.)
-  - **RBAC**: every RPC gates on the `x-gridtokenx-role` header via `ServiceRole::from_headers` → `require_any` (`gridtokenx-blockchain-core/src/auth.rs`), fail-closed (missing/unknown role → `permission_denied`). `ApiGateway` also needs `x-gridtokenx-gateway-secret` (= `GATEWAY_SECRET`; dev default only when `CHAIN_BRIDGE_INSECURE=true`). `Admin` passes everywhere. Per-method allowlists: `VerifyToken` = ApiGateway/TradingApi/AggregatorBridge/Admin; `VerifyApiKey` = ApiGateway/AggregatorBridge/Admin; `GetUserWallet` = AggregatorBridge/ApiGateway/Admin; all others = ApiGateway/Admin.
+  - **RBAC**: every RPC gates on the `x-gridtokenx-role` header via `ServiceRole::from_headers` → `require_any` (`gridtokenx-blockchain-core/src/auth.rs`), fail-closed (missing/unknown role → `permission_denied`). `ApiGateway` also needs `x-gridtokenx-gateway-secret` (= `GATEWAY_SECRET`; dev default only when `CHAIN_BRIDGE_INSECURE=true`). `Admin` passes everywhere. Per-method allowlists: `VerifyToken` = ApiGateway/TradingApi/AggregatorBridge/MeterService/Admin; `VerifyApiKey` = ApiGateway/AggregatorBridge/Admin; `GetUserWallet` = AggregatorBridge/ApiGateway/Admin; all others = ApiGateway/Admin. (`MeterService` role = `meter-service`, SPIFFE `spiffe://gridtokenx.th/prod/meter-service`; defined in `gridtokenx-blockchain-core/src/auth.rs`, currently granted `VerifyToken` only.)
 - **Observability** init via the shared `gridtokenx-telemetry` workspace crate, wrapped by the local `telemetry` module: `main.rs` calls `telemetry::init_telemetry("gridtokenx-iam")` (tracing/OTel) before `startup::run`. Don't hand-roll a `tracing-subscriber` here — extend the shared crate.
 
 ## Migrations — read before touching
@@ -92,3 +94,14 @@ Never reverse. `iam-core` is the zero-I/O heart: domain models (`domain/identity
 - `iam-logic` unit-tests `AuthService` against `mockall` mocks — `iam-core`'s `mocks` feature exports `Mock*Trait` types (kept out of the production binary). Build mocks via that feature, never hand-roll fakes.
 - `iam-persistence` uses real Postgres (`sqlx::test`) — integration, needs a DB up. Writes are designed idempotent for safe retry.
 - Inline `#[cfg(test)]` modules (`*_tests.rs` files) per crate; shell-based end-to-end scripts live in `tests/*.sh` (`api_test.sh`, `auth_flow_test.sh`, etc.) with `tests/api-ref.md` as the endpoint reference.
+
+## Search Tooling
+
+> **Use `rg` (ripgrep), never `grep`.** When shelling out to search files, run `rg` —
+> it respects `.gitignore`, skips binaries, and is far faster than `grep`/`find -exec grep`.
+> Reserve plain `grep` only for piping non-file streams.
+>
+> **Gotcha — the RTK proxy hook rewrites a bare `rg` into `grep`**, so ripgrep-only
+> flags (`--type`, `-g`, recursive-by-default) blow up with `grep: unrecognized option`
+> or get silently mangled. Bypass by invoking ripgrep with its **absolute path**:
+> `/opt/homebrew/bin/rg …`. Do **not** "fix" it by falling back to `grep`.
