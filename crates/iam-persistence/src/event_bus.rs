@@ -5,6 +5,7 @@
 
 use redis::{AsyncCommands, Client, aio::ConnectionManager};
 use anyhow::{Result, Context};
+use std::sync::Arc;
 use tracing::{info, warn};
 use async_trait::async_trait;
 
@@ -12,7 +13,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 pub mod kafka;
 
-use iam_core::traits::EventBusTrait;
+use iam_core::traits::{EventBusTrait, OutboxRepositoryTrait};
 use iam_core::domain::identity::Event;
 use iam_core::error::{Result as IamResult, ApiError};
 
@@ -28,13 +29,22 @@ pub struct EventBus {
     conn: ConnectionManager,
     stream_name: String,
     pub kafka: Option<kafka::KafkaEventBus>,
+    /// Transactional outbox. When set (alongside Kafka), the Kafka dual-write is
+    /// made durable: the event is enqueued here and relayed by the OutboxWorker
+    /// with retry, instead of a fire-and-forget `tokio::spawn` that loses the
+    /// event on a broker blip.
+    outbox: Option<Arc<dyn OutboxRepositoryTrait>>,
 }
 
 impl EventBus {
     /// Create a new `EventBus` connected to Redis Streams.
+    ///
+    /// Pass `outbox` to make Kafka delivery durable (recommended in production);
+    /// pass `None` to retain the legacy fire-and-forget Kafka dual-write.
     pub async fn new(
         redis_url: &str,
         kafka_brokers: Option<String>,
+        outbox: Option<Arc<dyn OutboxRepositoryTrait>>,
     ) -> Result<Self> {
         let client = Client::open(redis_url)
             .context("Failed to create Redis client for EventBus")?;
@@ -60,17 +70,18 @@ impl EventBus {
             conn,
             stream_name: DEFAULT_STREAM.to_string(),
             kafka,
+            outbox,
         })
     }
 
     /// Internal publish implementation
     async fn publish_raw(&self, event: &Event) -> Result<String> {
-        // 1. Dual-write to Kafka (Event Sourcing) — fire-and-forget.
-        // Kafka delivery is non-critical, but `producer.send` blocks up to
-        // `message.timeout.ms` (5s) when the broker is unreachable. Awaiting it
-        // here would add that latency to the request path (register/login/verify),
-        // so spawn it off-thread and let Redis remain the synchronous primary write.
-        self.spawn_kafka_publish(event);
+        // 1. Dual-write to Kafka. When an outbox is configured the event is
+        // persisted durably (the OutboxWorker relays it with retry, so a broker
+        // blip no longer drops it); otherwise fall back to the legacy
+        // fire-and-forget spawn. Either way the request path is not blocked on a
+        // slow/unreachable broker's 5s `message.timeout.ms`.
+        self.dispatch_kafka(event).await;
 
         // 2. Legacy Redis Stream
         let payload = serde_json::to_string(event)
@@ -103,6 +114,26 @@ impl EventBus {
         Ok(entry_id)
     }
 
+    /// Route the Kafka dual-write through the durable outbox when available,
+    /// else the legacy fire-and-forget spawn. Never returns an error: a failed
+    /// outbox enqueue degrades to the fire-and-forget path rather than failing
+    /// the caller's request (Redis remains the synchronous primary write).
+    async fn dispatch_kafka(&self, event: &Event) {
+        match (&self.outbox, self.kafka.is_some()) {
+            (Some(outbox), true) => {
+                if let Err(e) = outbox.enqueue(event).await {
+                    warn!(
+                        "Outbox enqueue failed for {}, falling back to fire-and-forget Kafka: {}",
+                        event.event_type, e
+                    );
+                    self.spawn_kafka_publish(event);
+                }
+            }
+            // No outbox, or Kafka disabled: keep prior behavior.
+            _ => self.spawn_kafka_publish(event),
+        }
+    }
+
     /// Spawn the Kafka dual-write on a background task so a slow/unreachable
     /// broker never adds latency to (or fails) the caller's request.
     fn spawn_kafka_publish(&self, event: &Event) {
@@ -119,10 +150,11 @@ impl EventBus {
 
     /// Publish multiple events atomically in a single pipeline.
     pub async fn publish_batch_raw(&self, events: &[Event]) -> Result<Vec<String>> {
-        // 1. Dual-write to Kafka — fire-and-forget (see `publish_raw`).
+        // 1. Dual-write to Kafka via the durable outbox (or fire-and-forget
+        // fallback) — see `publish_raw` / `dispatch_kafka`.
         if self.kafka.is_some() {
             for event in events {
-                self.spawn_kafka_publish(event);
+                self.dispatch_kafka(event).await;
             }
         }
 

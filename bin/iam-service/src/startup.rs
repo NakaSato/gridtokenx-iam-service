@@ -20,10 +20,11 @@ use iam_api::middleware::metrics;
 use iam_logic::{JwtService, ApiKeyService, AuthService};
 use iam_persistence::cache::CacheService;
 use iam_persistence::event_bus::EventBus;
-use iam_persistence::repository::{UserRepository, WalletRepository, ApiKeyRepository};
+use iam_persistence::outbox_worker::OutboxWorker;
+use iam_persistence::repository::{UserRepository, WalletRepository, ApiKeyRepository, OutboxRepository};
 use iam_core::traits::{
     UserRepositoryTrait, WalletRepositoryTrait, ApiKeyRepositoryTrait,
-    CacheTrait, EventBusTrait
+    CacheTrait, EventBusTrait, OutboxRepositoryTrait
 };
 
 /// Starts the IAM service with the provided configuration.
@@ -62,14 +63,38 @@ pub async fn run(config: Config, token: CancellationToken) -> anyhow::Result<()>
             .context("Failed to initialize Redis cache service")?
     );
 
-    let event_bus: Arc<dyn EventBusTrait> = Arc::new(
-        EventBus::new(
-            &config.redis_url,
-            config.kafka_brokers.clone(),
-        )
-            .await
-            .context("Failed to initialize identity event bus")?
-    );
+    // Transactional outbox: makes the Kafka dual-write durable so a broker blip
+    // retries instead of silently dropping events (e.g. verification mail).
+    let outbox_repo: Arc<dyn OutboxRepositoryTrait> =
+        Arc::new(OutboxRepository::new(db_pool.clone()));
+
+    let event_bus_concrete = EventBus::new(
+        &config.redis_url,
+        config.kafka_brokers.clone(),
+        Some(outbox_repo.clone()),
+    )
+        .await
+        .context("Failed to initialize identity event bus")?;
+
+    // Spawn the drain worker only when Kafka is actually configured; otherwise
+    // there is nothing to deliver to and the outbox would just accumulate.
+    if let Some(kafka) = event_bus_concrete.kafka.clone() {
+        let worker = OutboxWorker::new(outbox_repo.clone(), kafka);
+        let worker_token = token.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                () = worker.run() => {},
+                () = worker_token.cancelled() => {
+                    info!("IAM OutboxWorker shutting down");
+                }
+            }
+        });
+        info!("✅ IAM OutboxWorker started (durable Kafka delivery)");
+    } else {
+        info!("ℹ️  Kafka disabled — outbox worker not started (events go to Redis only)");
+    }
+
+    let event_bus: Arc<dyn EventBusTrait> = Arc::new(event_bus_concrete);
 
     // 4. Initialize Auth Services
     let jwt_service = JwtService::new(&config.jwt_secret).context("Failed to initialize JWT service")?;

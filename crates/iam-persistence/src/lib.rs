@@ -8,9 +8,12 @@
 pub mod cache;
 /// Redis-backed event bus for domain events.
 pub mod event_bus;
+/// Background worker draining the transactional outbox to Kafka.
+pub mod outbox_worker;
 /// SQLx-based PostgreSQL repositories.
 pub mod repository;
 
 pub use cache::CacheService;
 pub use event_bus::EventBus;
+pub use outbox_worker::OutboxWorker;
 pub use repository::*;

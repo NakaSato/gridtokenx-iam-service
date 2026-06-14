@@ -81,6 +81,96 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
+    async fn test_outbox_repository_lifecycle(pool: PgPool) -> iam_core::error::Result<()> {
+        use crate::repository::OutboxRepository;
+        use iam_core::domain::identity::Event;
+        use iam_core::traits::OutboxRepositoryTrait;
+
+        let outbox = OutboxRepository::new(pool.clone());
+
+        // 1. Enqueue → durably stored as PENDING and visible to the drain query.
+        let event = Event::verification_email_requested(
+            &Uuid::new_v4(),
+            "outboxuser",
+            "outbox@test.com",
+            "verify-token-xyz",
+        );
+        outbox.enqueue(&event).await?;
+
+        let pending = outbox.fetch_pending(10).await?;
+        assert_eq!(pending.len(), 1, "enqueued event should be pending");
+        let record = pending.into_iter().next().expect("one pending record");
+        assert_eq!(record.event_type, "VerificationEmailRequested");
+
+        // Payload round-trips back into a full Event (what the worker delivers).
+        let decoded: Event = serde_json::from_value(record.payload.clone())
+            .expect("payload deserializes to Event");
+        assert_eq!(decoded.event_type, "VerificationEmailRequested");
+        assert_eq!(
+            decoded.data.as_ref().and_then(|d| d.get("token")).and_then(|v| v.as_str()),
+            Some("verify-token-xyz"),
+        );
+
+        // 2. mark_processed → leaves the pending set, row is PROCESSED.
+        outbox.mark_processed(record.id).await?;
+        assert!(
+            outbox.fetch_pending(10).await?.is_empty(),
+            "processed event must not be re-fetched",
+        );
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM iam_outbox_events WHERE id = $1")
+                .bind(record.id)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(status, "PROCESSED");
+
+        // 3. mark_failed → stays PENDING for retry (the no-loss-on-blip guarantee)
+        //    until it exhausts the attempt budget, then is quarantined FAILED.
+        let event2 = Event::user_registered(&Uuid::new_v4(), "retryuser", "retry@test.com");
+        outbox.enqueue(&event2).await?;
+        let id2 = outbox
+            .fetch_pending(10)
+            .await?
+            .into_iter()
+            .next()
+            .expect("second event pending")
+            .id;
+
+        // MAX_ATTEMPTS = 10: first 9 failures keep it retryable.
+        for expected_attempts in 1..=9 {
+            outbox.mark_failed(id2).await?;
+            let (status, attempts): (String, i32) = sqlx::query_as(
+                "SELECT status, attempts FROM iam_outbox_events WHERE id = $1",
+            )
+            .bind(id2)
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(status, "PENDING", "should still retry on attempt {expected_attempts}");
+            assert_eq!(attempts, expected_attempts);
+        }
+        assert_eq!(
+            outbox.fetch_pending(10).await?.len(),
+            1,
+            "still retryable after 9 failures",
+        );
+
+        // 10th failure crosses the budget → quarantined, no longer retried.
+        outbox.mark_failed(id2).await?;
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM iam_outbox_events WHERE id = $1")
+                .bind(id2)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(status, "FAILED", "exhausted attempts must quarantine the row");
+        assert!(
+            outbox.fetch_pending(10).await?.is_empty(),
+            "quarantined event must not be retried",
+        );
+
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
     async fn test_api_key_repository(pool: PgPool) -> iam_core::error::Result<()> {
         use crate::repository::ApiKeyRepository;
         use iam_core::traits::ApiKeyRepositoryTrait;

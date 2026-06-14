@@ -148,6 +148,25 @@ pub trait EventBusTrait: Send + Sync {
     async fn publish_batch(&self, events: &[crate::domain::identity::Event]) -> Result<()>;
 }
 
+/// Trait for the transactional outbox that backs durable event delivery.
+///
+/// Events are enqueued here (ideally in the same DB transaction as the state
+/// change that produced them) and later relayed to Kafka by the `OutboxWorker`,
+/// so a broker outage retries instead of silently dropping the event.
+#[async_trait]
+#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+pub trait OutboxRepositoryTrait: Send + Sync {
+    /// Durably enqueue an event for later delivery to Kafka.
+    async fn enqueue(&self, event: &crate::domain::identity::Event) -> Result<()>;
+    /// Fetch up to `limit` undelivered events, oldest first.
+    async fn fetch_pending(&self, limit: i64) -> Result<Vec<crate::domain::identity::OutboxRecord>>;
+    /// Mark an event as successfully delivered.
+    async fn mark_processed(&self, id: Uuid) -> Result<()>;
+    /// Record a failed delivery attempt; the row stays pending for retry until
+    /// it exhausts its attempt budget, after which it is quarantined as failed.
+    async fn mark_failed(&self, id: Uuid) -> Result<()>;
+}
+
 /// Trait for high-level blockchain interactions.
 #[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
 pub trait BlockchainTrait: Send + Sync {

@@ -37,6 +37,18 @@ impl Event {
     }
 }
 
+/// A durably-stored domain event read back from the transactional outbox
+/// (`iam_outbox_events`), awaiting delivery to Kafka by the `OutboxWorker`.
+#[derive(Debug, Clone)]
+pub struct OutboxRecord {
+    /// Outbox row id (primary key) — used to mark the row processed/failed.
+    pub id: Uuid,
+    /// Event type discriminator copied from the stored event.
+    pub event_type: String,
+    /// Serialized [`Event`] payload (JSONB); deserialize to deliver.
+    pub payload: serde_json::Value,
+}
+
 // ── Convenience event constructors ──────────────────────────────────────────
 
 impl Event {
