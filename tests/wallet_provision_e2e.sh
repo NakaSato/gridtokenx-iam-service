@@ -72,15 +72,15 @@ check "POST /auth/login" "access_token" "$R"
 TOKEN=$(echo "$R" | grep -o '"access_token":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
 AUTH_HDR="Authorization: Bearer ${TOKEN}"
 
-# ── /users/me → wallet_address linked on the user row ─────────────────────────
-ME=$(curl -s "$BASE/api/v1/users/me" -H "$AUTH_HDR" -H "$ROLE_HDR" -H "$GW_HDR")
-check "GET /users/me (wallet_address populated)" '"wallet_address":"[1-9A-HJ-NP-Za-km-z]' "$ME"
+# ── /me → wallet_address linked on the user row ─────────────────────────
+ME=$(curl -s "$BASE/api/v1/me" -H "$AUTH_HDR" -H "$ROLE_HDR" -H "$GW_HDR")
+check "GET /me (wallet_address populated)" '"wallet_address":"[1-9A-HJ-NP-Za-km-z]' "$ME"
 WALLET_ADDR=$(echo "$ME" | grep -o '"wallet_address":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
 echo "   custodial wallet: ${WALLET_ADDR:-<none>}"
 
-# ── /users/me/wallets → Fix 3: exactly ONE primary Custodial wallet ───────────
-WL=$(curl -s "$BASE/api/v1/users/me/wallets" -H "$AUTH_HDR" -H "$ROLE_HDR" -H "$GW_HDR")
-check "GET /users/me/wallets (Custodial wallet present)" "Custodial" "$WL"
+# ── /me/wallets → Fix 3: exactly ONE primary Custodial wallet ───────────
+WL=$(curl -s "$BASE/api/v1/me/wallets" -H "$AUTH_HDR" -H "$ROLE_HDR" -H "$GW_HDR")
+check "GET /me/wallets (Custodial wallet present)" "Custodial" "$WL"
 PRIMARY_COUNT=$(echo "$WL" | grep -o '"is_primary":true' | wc -l | tr -d ' ')
 if [[ "$PRIMARY_COUNT" == "1" ]]; then
   echo "✅ wallets: exactly one primary (Fix 3 — no dual-primary)"; ((PASS_COUNT++)) || true

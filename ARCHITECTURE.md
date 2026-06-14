@@ -68,8 +68,8 @@ Both servers are wired in `bin/iam-service/src/startup.rs` and run concurrently 
 
 ### REST (Axum) — `IAM_PORT` (4010)
 - `/api/v1/auth/{register,login,verify,resend-verification,forgot-password,reset-password}` — rate-limited auth flow. `verify` also auto-provisions a custodial Solana wallet (keypair encrypted via `gridtokenx-blockchain-core` `WalletService`, stored on `users`; best-effort on-chain Registry registration through Chain Bridge).
-- `/api/v1/users/me`, `/api/v1/users/me/onchain-profile`, `/api/v1/users/me/wallets/*` — profile + wallet CRUD.
-- `/api/v1/system/config` — runtime config exposure.
+- `/api/v1/me`, `/api/v1/me/registration`, `/api/v1/me/wallets/*` — profile + wallet CRUD. `PATCH /api/v1/me/wallets/{id}` with `{"is_primary":true}` promotes the primary wallet. (Renamed from `/api/v1/users/me*`; `/onchain-profile`→`/registration`; primary moved from `PUT .../primary` to `PATCH`.)
+- `/api/v1/system/config` — runtime config exposure. **Private**: APISIX gateway restricts it to internal CIDRs (not public internet).
 - `/metrics` (Prometheus), `/health`, `/health/ready` (checks Postgres + Redis), `/health/live`.
 
 ### gRPC / ConnectRPC — `IAM_GRPC_PORT` (4020, `IAM_PORT + 10`)

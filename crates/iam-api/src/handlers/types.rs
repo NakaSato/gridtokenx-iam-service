@@ -262,6 +262,15 @@ pub struct SetPrimaryWalletRequest {
     // body intentionally empty — wallet_id comes from path
 }
 
+/// Partial-update body for a wallet (PATCH /api/v1/me/wallets/{id}).
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateWalletRequest {
+    /// Set this wallet as the primary. Only `true` is actionable — exactly one
+    /// primary wallet exists, so it is promoted, not toggled off.
+    #[serde(default)]
+    pub is_primary: Option<bool>,
+}
+
 /// Response after deleting a wallet.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DeleteWalletResponse {

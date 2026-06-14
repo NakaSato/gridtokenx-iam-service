@@ -63,14 +63,14 @@ req "forgot.happy"    200 POST /api/v1/auth/forgot-password -H 'content-type:app
 req "reset.badtoken"  400 POST /api/v1/auth/reset-password -H 'content-type:application/json' -d "{\"token\":\"bad\",\"new_password\":\"$PW\"}"
 
 log "PROTECTED — no auth"
-req "me.noauth"       401 GET /api/v1/users/me "${ADMIN[@]}"
-req "wallets.noauth"  401 GET /api/v1/users/me/wallets "${ADMIN[@]}"
+req "me.noauth"       401 GET /api/v1/me "${ADMIN[@]}"
+req "wallets.noauth"  401 GET /api/v1/me/wallets "${ADMIN[@]}"
 
 log "PROTECTED — with token (role=admin)"
 AUTH=(-H "Authorization: Bearer ${TOKEN}")
-req "me.ok"           200 GET /api/v1/users/me "${ADMIN[@]}" "${AUTH[@]}"
+req "me.ok"           200 GET /api/v1/me "${ADMIN[@]}" "${AUTH[@]}"
 req "refresh.ok"      200 POST /api/v1/auth/refresh "${ADMIN[@]}" "${AUTH[@]}"
-req "wallets.list"    200 GET /api/v1/users/me/wallets "${ADMIN[@]}" "${AUTH[@]}"
+req "wallets.list"    200 GET /api/v1/me/wallets "${ADMIN[@]}" "${AUTH[@]}"
 # Valid, unique 32-byte Solana pubkey per run (base58). wallet_address is globally unique in DB.
 genpubkey(){ python3 -c '
 import os
@@ -82,26 +82,26 @@ while n>0:
 print(s.rjust(44,"1"))
 '; }
 WADDR=$(genpubkey)
-req "wallet.link"     200 POST /api/v1/users/me/wallets "${ADMIN[@]}" "${AUTH[@]}" -H 'content-type:application/json' \
+req "wallet.link"     200 POST /api/v1/me/wallets "${ADMIN[@]}" "${AUTH[@]}" -H 'content-type:application/json' \
   -d "{\"wallet_address\":\"$WADDR\",\"label\":\"Primary\",\"is_primary\":true}"
 WID=$(printf '%s' "$LAST_BODY" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')   # capture BEFORE dup overwrites LAST_BODY
 echo "   wallet id: $WID"
-req "wallet.link.dup" 409 POST /api/v1/users/me/wallets "${ADMIN[@]}" "${AUTH[@]}" -H 'content-type:application/json' \
+req "wallet.link.dup" 409 POST /api/v1/me/wallets "${ADMIN[@]}" "${AUTH[@]}" -H 'content-type:application/json' \
   -d "{\"wallet_address\":\"$WADDR\",\"label\":\"Dup\",\"is_primary\":false}"
-req "wallet.get"      200 GET "/api/v1/users/me/wallets/$WID" "${ADMIN[@]}" "${AUTH[@]}"
-req "wallet.setprim"  200 PUT "/api/v1/users/me/wallets/$WID/primary" "${ADMIN[@]}" "${AUTH[@]}"
-req "wallet.get.badid" 400 GET "/api/v1/users/me/wallets/not-a-uuid" "${ADMIN[@]}" "${AUTH[@]}"
-req "wallet.del.primary" 400 DELETE "/api/v1/users/me/wallets/$WID" "${ADMIN[@]}" "${AUTH[@]}"  # primary cannot be deleted (by design)
+req "wallet.get"      200 GET "/api/v1/me/wallets/$WID" "${ADMIN[@]}" "${AUTH[@]}"
+req "wallet.setprim"  200 PATCH "/api/v1/me/wallets/$WID" "${ADMIN[@]}" "${AUTH[@]}" -H 'content-type:application/json' -d '{"is_primary":true}'
+req "wallet.get.badid" 400 GET "/api/v1/me/wallets/not-a-uuid" "${ADMIN[@]}" "${AUTH[@]}"
+req "wallet.del.primary" 400 DELETE "/api/v1/me/wallets/$WID" "${ADMIN[@]}" "${AUTH[@]}"  # primary cannot be deleted (by design)
 # link a 2nd, non-primary wallet then delete it
 WADDR2=$(genpubkey)
-req "wallet.link2"    200 POST /api/v1/users/me/wallets "${ADMIN[@]}" "${AUTH[@]}" -H 'content-type:application/json' \
+req "wallet.link2"    200 POST /api/v1/me/wallets "${ADMIN[@]}" "${AUTH[@]}" -H 'content-type:application/json' \
   -d "{\"wallet_address\":\"$WADDR2\",\"label\":\"Secondary\",\"is_primary\":false}"
 WID2=$(printf '%s' "$LAST_BODY" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
-req "wallet.delete"   200 DELETE "/api/v1/users/me/wallets/$WID2" "${ADMIN[@]}" "${AUTH[@]}"
+req "wallet.delete"   200 DELETE "/api/v1/me/wallets/$WID2" "${ADMIN[@]}" "${AUTH[@]}"
 
 # NOTE: onboard returns HTTP 200 with {"status":"failed"} when Chain Bridge has no RPC (graceful, by design — not 5xx)
 log "ONCHAIN (needs Solana validator; degrades to status:failed when Chain Bridge has no RPC)"
-CURL_TIMEOUT=30 req "onboard" 200 POST /api/v1/users/me/onchain-profile "${ADMIN[@]}" "${AUTH[@]}" -H 'content-type:application/json' \
+CURL_TIMEOUT=30 req "onboard" 200 POST /api/v1/me/registration "${ADMIN[@]}" "${AUTH[@]}" -H 'content-type:application/json' \
   -d '{"user_type":"prosumer","location":{"lat_e7":13750000,"long_e7":100500000}}'
 
 printf '\n==== RESULT: PASS=%d FAIL=%d ====\n' "$PASS" "$FAIL"

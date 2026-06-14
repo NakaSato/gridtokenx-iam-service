@@ -89,7 +89,7 @@ else
 fi
 
 if [[ -n "$TOKEN" ]]; then
-  check "GET /api/v1/users/me" 200 "$BASE/api/v1/users/me" \
+  check "GET /api/v1/me" 200 "$BASE/api/v1/me" \
     -H "Authorization: Bearer $TOKEN" \
     -H "x-gridtokenx-role: api-gateway" \
     -H "x-gridtokenx-gateway-secret: gridtokenx-gateway-secret-2025"
@@ -105,7 +105,7 @@ check "POST /auth/login wrong creds" 401 \
   -H "Content-Type: application/json" \
   -d '{"username":"nobody","password":"wrong"}'
 
-check "GET /users/me no auth" 401 "$BASE/api/v1/users/me"
+check "GET /me no auth" 401 "$BASE/api/v1/me"
 
 # ── Load burst (populate histograms) ──────────────────────────────────────────
 echo ""

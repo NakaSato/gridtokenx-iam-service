@@ -95,7 +95,7 @@ register_and_explore() {
   AUTH_HEADERS=(-H "Authorization: Bearer $TOKEN")
 
   # 4. Profile (/me)
-  call_api GET "/api/v1/users/me" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}"
+  call_api GET "/api/v1/me" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}"
 
   # 5. Identity: Link Wallet
   # Generate a fresh wallet
@@ -103,7 +103,7 @@ register_and_explore() {
   WALLET=$(solana-keygen pubkey "/tmp/w_$TS.json")
   rm "/tmp/w_$TS.json"
 
-  RESP=$(call_api POST "/api/v1/users/me/wallets" \
+  RESP=$(call_api POST "/api/v1/me/wallets" \
     "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}" \
     -H "Content-Type: application/json" \
     -d "{\"wallet_address\":\"$WALLET\",\"label\":\"Primary\",\"is_primary\":true}")
@@ -111,18 +111,18 @@ register_and_explore() {
   WALLET_ID=$(echo "$RESP" | jq -r '.id' || true)
 
   # 6. Identity: List Wallets
-  call_api GET "/api/v1/users/me/wallets" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}"
+  call_api GET "/api/v1/me/wallets" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}"
 
   if [[ "$WALLET_ID" != "null" && -n "$WALLET_ID" ]]; then
     # 7. Identity: Get Single Wallet
-    call_api GET "/api/v1/users/me/wallets/$WALLET_ID" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}"
+    call_api GET "/api/v1/me/wallets/$WALLET_ID" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}"
     
     # 8. Identity: Set Primary (redundant but calls the endpoint)
-    call_api PUT "/api/v1/users/me/wallets/$WALLET_ID/primary" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}"
+    call_api PATCH "/api/v1/me/wallets/$WALLET_ID" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}" -H 'content-type: application/json' -d '{"is_primary":true}'
   fi
 
   # 9. Onboard
-  call_api POST "/api/v1/users/me/onchain-profile" \
+  call_api POST "/api/v1/me/registration" \
     "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}" \
     -H "Content-Type: application/json" \
     -d "{\"user_type\":\"$type_lower\",\"location\":{\"lat_e7\":13750000,\"long_e7\":100500000}}"
@@ -132,7 +132,7 @@ register_and_explore() {
   WALLET2=$(solana-keygen pubkey "/tmp/w2_$TS.json")
   rm "/tmp/w2_$TS.json"
 
-  RESP2=$(call_api POST "/api/v1/users/me/wallets" \
+  RESP2=$(call_api POST "/api/v1/me/wallets" \
     "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}" \
     -H "Content-Type: application/json" \
     -d "{\"wallet_address\":\"$WALLET2\",\"label\":\"Secondary\",\"is_primary\":false}")
@@ -141,7 +141,7 @@ register_and_explore() {
   
   if [[ "$WALLET2_ID" != "null" && -n "$WALLET2_ID" ]]; then
     # 11. Identity: Delete Wallet
-    call_api DELETE "/api/v1/users/me/wallets/$WALLET2_ID" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}"
+    call_api DELETE "/api/v1/me/wallets/$WALLET2_ID" "${GW_HEADERS[@]}" "${AUTH_HEADERS[@]}"
   fi
 }
 

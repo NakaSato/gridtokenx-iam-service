@@ -100,7 +100,7 @@ TOKEN=$(echo "$R" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
 
 # 4. Profile (/me)
 echo "Testing /me (Note: May fail if Gateway strips x-gridtokenx-role header)"
-R=$(curl -s "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/users/me")
+R=$(curl -s "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/me")
 check "Get profile (/me)" "\"username\":\"$USER\"" "$R"
 
 # ── Identity & Wallet Management ──────────────────────────────────────────────
@@ -110,7 +110,7 @@ header "Identity & Wallets"
 R=$(curl -s -X POST "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"wallet_address\":\"$WALLET\",\"label\":\"Primary\",\"is_primary\":true}" \
-  "$BASE/api/v1/users/me/wallets")
+  "$BASE/api/v1/me/wallets")
 check "Link first wallet (primary)" "\"id\":" "$R"
 
 if echo "$R" | grep -qi "\"id\":"; then
@@ -120,35 +120,36 @@ if echo "$R" | grep -qi "\"id\":"; then
   R=$(curl -s -X POST "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"user_type":"prosumer","location":{"lat_e7":13750000,"long_e7":100500000}}' \
-    "$BASE/api/v1/users/me/onchain-profile")
+    "$BASE/api/v1/me/registration")
   check "Onboard user" "status" "$R"
 
   # 3. List Wallets
-  R=$(curl -s "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/users/me/wallets")
+  R=$(curl -s "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/me/wallets")
   check "List wallets" "\"wallet_address\":\"$WALLET\"" "$R"
 
   # 4. Get Single Wallet
-  R=$(curl -s "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/users/me/wallets/$WALLET_ID")
+  R=$(curl -s "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/me/wallets/$WALLET_ID")
   check "Get wallet details" "$WALLET_ID" "$R"
 
   # 5. Link second wallet
   R=$(curl -s -X POST "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"wallet_address\":\"$WALLET2\",\"label\":\"Secondary\",\"is_primary\":false}" \
-    "$BASE/api/v1/users/me/wallets")
+    "$BASE/api/v1/me/wallets")
   check "Link second wallet" "\"id\":" "$R"
   
   if echo "$R" | grep -qi "\"id\":"; then
     WALLET2_ID=$(echo "$R" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
     # 6. Set secondary as primary
-    R=$(curl -s -X PUT "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" \
-      "$BASE/api/v1/users/me/wallets/$WALLET2_ID/primary")
+    R=$(curl -s -X PATCH "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" \
+      -H 'content-type: application/json' -d '{"is_primary":true}' \
+      "$BASE/api/v1/me/wallets/$WALLET2_ID")
     check "Set wallet2 as primary" "\"is_primary\":true" "$R"
 
     # 7. Unlink (Delete) wallet1 (which is no longer primary)
     R=$(curl -s -X DELETE "${GW_HEADERS[@]}" -H "Authorization: Bearer $TOKEN" \
-      "$BASE/api/v1/users/me/wallets/$WALLET_ID")
+      "$BASE/api/v1/me/wallets/$WALLET_ID")
     check "Unlink wallet1" "success" "$R"
   fi
 else

@@ -86,64 +86,64 @@ check "POST /auth/login (unknown user)" "invalid" "$R"
 R=$(curl -s "$BASE/api/v1/auth/verify?token=invalid-token-xyz")
 check "GET /auth/verify (invalid token)" "invalid" "$R"
 
-# ── /users/me ─────────────────────────────────────────────────────────────────
-R=$(curl -s "$BASE/api/v1/users/me" \
+# ── /me ─────────────────────────────────────────────────────────────────
+R=$(curl -s "$BASE/api/v1/me" \
   -H "x-gridtokenx-role: api-gateway" \
   -H "x-gridtokenx-gateway-secret: gridtokenx-gateway-secret-2025" \
   -H "Authorization: Bearer $TOKEN")
-check "GET /users/me (valid)" "\"username\"" "$R"
+check "GET /me (valid)" "\"username\"" "$R"
 
-R=$(curl -s "$BASE/api/v1/users/me" \
+R=$(curl -s "$BASE/api/v1/me" \
   -H "x-gridtokenx-role: api-gateway" \
   -H "x-gridtokenx-gateway-secret: gridtokenx-gateway-secret-2025")
-check "GET /users/me (no token)" "auth" "$R"
+check "GET /me (no token)" "auth" "$R"
 
 if [[ "$BASE" != *"4001"* ]]; then
-  R=$(curl -s "$BASE/api/v1/users/me" \
+  R=$(curl -s "$BASE/api/v1/me" \
     -H "Authorization: Bearer $TOKEN")
-  check "GET /users/me (no gateway headers)" "auth" "$R"
+  check "GET /me (no gateway headers)" "auth" "$R"
 else
   echo "⏭ Skipping 'no gateway headers' check (Gateway injects them automatically)"
   ((SUCCESS_COUNT++))
 fi
 
 # ── Identity: link wallet ─────────────────────────────────────────────────────
-R=$(curl -s -X POST "$BASE/api/v1/users/me/wallets" \
+R=$(curl -s -X POST "$BASE/api/v1/me/wallets" \
   -H "x-gridtokenx-role: api-gateway" \
   -H "x-gridtokenx-gateway-secret: gridtokenx-gateway-secret-2025" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"wallet_address\":\"$WALLET\",\"label\":\"test\",\"is_primary\":true}")
-check "POST /users/me/wallets (valid)" "\"id\":" "$R"
+check "POST /me/wallets (valid)" "\"id\":" "$R"
 
 # ── Identity: onboard ─────────────────────────────────────────────────────────
-R=$(curl -s -X POST "$BASE/api/v1/users/me/onchain-profile" \
+R=$(curl -s -X POST "$BASE/api/v1/me/registration" \
   -H "x-gridtokenx-role: api-gateway" \
   -H "x-gridtokenx-gateway-secret: gridtokenx-gateway-secret-2025" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"user_type":"prosumer","location":{"lat_e7":137000000,"long_e7":100000000}}')
-check "POST /users/me/onchain-profile (valid)" "status" "$R"
+check "POST /me/registration (valid)" "status" "$R"
 
-R=$(curl -s -X POST "$BASE/api/v1/users/me/onchain-profile" \
+R=$(curl -s -X POST "$BASE/api/v1/me/registration" \
   -H "Content-Type: application/json" \
   -d '{"user_type":"prosumer","location":{"lat_e7":137000000,"long_e7":100000000}}')
-check "POST /users/me/onchain-profile (no auth)" "auth" "$R"
+check "POST /me/registration (no auth)" "auth" "$R"
 
 # ── Identity: wallet extras ───────────────────────────────────────────────────
-R=$(curl -s -X POST "$BASE/api/v1/users/me/wallets" \
+R=$(curl -s -X POST "$BASE/api/v1/me/wallets" \
   -H "x-gridtokenx-role: api-gateway" \
   -H "x-gridtokenx-gateway-secret: gridtokenx-gateway-secret-2025" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"wallet_address\":\"$WALLET\",\"label\":\"test\",\"is_primary\":true}")
 # This might fail with DB_7002 if not handled, but we check for failure
-check "POST /users/me/wallets (duplicate)" "error" "$R"
+check "POST /me/wallets (duplicate)" "error" "$R"
 
-R=$(curl -s -X POST "$BASE/api/v1/users/me/wallets" \
+R=$(curl -s -X POST "$BASE/api/v1/me/wallets" \
   -H "Content-Type: application/json" \
   -d "{\"wallet_address\":\"$WALLET\",\"is_primary\":false}")
-check "POST /users/me/wallets (no auth)" "auth" "$R"
+check "POST /me/wallets (no auth)" "auth" "$R"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""

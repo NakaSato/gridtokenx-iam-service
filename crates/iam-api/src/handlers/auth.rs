@@ -197,7 +197,7 @@ pub async fn verify(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/users/me",
+    path = "/api/v1/me",
     responses(
         (status = 200, description = "Profile retrieved successfully", body = UserResponse),
         (status = 401, description = "Unauthorized"),

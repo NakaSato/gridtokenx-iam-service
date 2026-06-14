@@ -11,7 +11,7 @@ use iam_logic::AuthService;
 use crate::handlers::types::{
     OnChainOnboardingRequest, OnChainOnboardingResponse,
     LinkWalletRequest, LinkWalletResponse, WalletListResponse, DeleteWalletResponse,
-    UserWallet, UserType, AuthenticatedUser,
+    UpdateWalletRequest, UserWallet, UserType, AuthenticatedUser,
 };
 
 fn map_user_wallet(w: iam_core::domain::identity::UserWallet) -> UserWallet {
@@ -30,7 +30,7 @@ fn map_user_wallet(w: iam_core::domain::identity::UserWallet) -> UserWallet {
 
 #[utoipa::path(
     post,
-    path = "/api/v1/users/me/onchain-profile",
+    path = "/api/v1/me/registration",
     request_body = OnChainOnboardingRequest,
     responses(
         (status = 200, description = "Onboarding successful", body = OnChainOnboardingResponse),
@@ -76,7 +76,7 @@ pub async fn onboard_user(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/users/me/wallets",
+    path = "/api/v1/me/wallets",
     request_body = LinkWalletRequest,
     responses(
         (status = 200, description = "Wallet linked successfully", body = LinkWalletResponse),
@@ -112,7 +112,7 @@ pub async fn link_wallet(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/users/me/wallets",
+    path = "/api/v1/me/wallets",
     responses(
         (status = 200, description = "List of wallets", body = WalletListResponse),
         (status = 401, description = "Unauthorized"),
@@ -139,7 +139,7 @@ pub async fn list_wallets(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/users/me/wallets/{wallet_id}",
+    path = "/api/v1/me/wallets/{wallet_id}",
     params(("wallet_id" = Uuid, Path, description = "Wallet ID")),
     responses(
         (status = 200, description = "Wallet details", body = UserWallet),
@@ -166,11 +166,13 @@ pub async fn get_wallet(
 }
 
 #[utoipa::path(
-    put,
-    path = "/api/v1/users/me/wallets/{wallet_id}/primary",
+    patch,
+    path = "/api/v1/me/wallets/{wallet_id}",
     params(("wallet_id" = Uuid, Path, description = "Wallet ID")),
+    request_body = UpdateWalletRequest,
     responses(
-        (status = 200, description = "Primary wallet updated", body = UserWallet),
+        (status = 200, description = "Wallet updated", body = UserWallet),
+        (status = 400, description = "No actionable field in request body"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     ),
@@ -178,24 +180,33 @@ pub async fn get_wallet(
     security(("jwt" = []))
 )]
 #[instrument(skip(auth_service, auth))]
-pub async fn set_primary_wallet(
+pub async fn update_wallet(
     role: ServiceRole,
     auth: AuthenticatedUser,
     State(auth_service): State<AuthService>,
     Path(wallet_id): Path<Uuid>,
+    Json(request): Json<UpdateWalletRequest>,
 ) -> ApiResult<Json<UserWallet>> {
     let claims = auth.0;
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
         .map_err(|(_code, msg)| ApiError::Unauthorized(msg.to_string()))?;
-    
+
+    // Only `is_primary: true` is actionable today (exactly one primary exists,
+    // so it is promoted, never toggled off). Reject no-op bodies explicitly.
+    if request.is_primary != Some(true) {
+        return Err(ApiError::BadRequest(
+            "PATCH body must set `is_primary: true` (the only supported wallet update)".to_string(),
+        ));
+    }
+
     let w = auth_service.set_primary_wallet(claims.sub, wallet_id).await?;
-    
+
     Ok(Json(map_user_wallet(w)))
 }
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/users/me/wallets/{wallet_id}",
+    path = "/api/v1/me/wallets/{wallet_id}",
     params(("wallet_id" = Uuid, Path, description = "Wallet ID")),
     responses(
         (status = 200, description = "Wallet unlinked", body = DeleteWalletResponse),

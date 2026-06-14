@@ -58,7 +58,7 @@ This redesign focuses on industry standard best practices for **RESTful routing*
 ## 2. Users & Wallets
 
 ### Link Wallet
-`POST /api/v1/users/me/wallets`
+`POST /api/v1/me/wallets`
 *(Requires `Authorization: Bearer <token>` header)*
 
 **Request Body:**
@@ -83,7 +83,7 @@ This redesign focuses on industry standard best practices for **RESTful routing*
 ```
 
 ### Onboard User to Blockchain
-`POST /api/v1/users/me/onchain-profile`
+`POST /api/v1/me/registration`
 
 **Request Body:**
 ```json
@@ -154,7 +154,7 @@ This redesign focuses on industry standard best practices for **RESTful routing*
 ```
 
 ### List My Orders
-`GET /api/v1/users/me/orders?status=pending&limit=20&offset=0`
+`GET /api/v1/me/orders?status=pending&limit=20&offset=0`
 
 **Response Body (200 OK):**
 ```json
