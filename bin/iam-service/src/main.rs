@@ -16,6 +16,11 @@ fn main() -> anyhow::Result<()> {
     // 2. Initialize Telemetry (Tracing, Metrics)
     let _telemetry = telemetry::init_telemetry("gridtokenx-iam");
 
+    // External NTP server (Cloudflare primary, Google fallback) as primary wall-clock
+    // source — token expiry / event timestamps now check agreed time, not a drifting
+    // container clock. Background poller; `time::now()` is non-blocking, degrades to OS clock.
+    telemetry::time::init_default();
+
     // 3. Build optimized Tokio Runtime
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     builder.enable_all();

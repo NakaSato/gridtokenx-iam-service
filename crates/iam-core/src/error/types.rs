@@ -310,7 +310,7 @@ impl axum::response::IntoResponse for ApiError {
                 field: self.error_field(),
             },
             request_id,
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: gridtokenx_telemetry::time::now().to_rfc3339(),
         };
 
         (status, axum::Json(error_response)).into_response()

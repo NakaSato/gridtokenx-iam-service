@@ -41,7 +41,7 @@ impl identity::IdentityService for IdentityGrpcService {
         request: OwnedView<TokenRequestView<'static>>,
     ) -> std::result::Result<(ClaimsResponse, Context), ConnectError> {
         let role = self.extract_role(&ctx);
-        role.require_any(&[ServiceRole::ApiGateway, ServiceRole::TradingApi, ServiceRole::AggregatorBridge, ServiceRole::Admin])
+        role.require_any(&[ServiceRole::ApiGateway, ServiceRole::TradingApi, ServiceRole::AggregatorBridge, ServiceRole::MeterService, ServiceRole::Admin])
             .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
 
         info!("🔐 gRPC: VerifyToken request");

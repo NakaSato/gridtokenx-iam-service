@@ -1,5 +1,4 @@
 use uuid::Uuid;
-use chrono::Utc;
 use serde::{Serialize, Deserialize};
 
 /// Domain event that can be published to inter-service messaging systems.
@@ -24,7 +23,7 @@ impl Event {
         Self {
             id: Uuid::new_v4(),
             event_type: event_type.to_string(),
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: gridtokenx_telemetry::time::now().to_rfc3339(),
             data: None,
             source: source.to_string(),
         }

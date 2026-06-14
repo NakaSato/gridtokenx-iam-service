@@ -25,6 +25,7 @@ rust_decimal.workspace = true
 anyhow.workspace = true
 solana-sdk.workspace = true
 gridtokenx-blockchain-core.workspace = true
+gridtokenx-telemetry.workspace = true
 mockall = { workspace = true, optional = true }
 
 [features]
