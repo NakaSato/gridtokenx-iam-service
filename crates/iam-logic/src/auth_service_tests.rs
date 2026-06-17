@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use uuid::Uuid;
-use iam_core::domain::identity::{User, UserWithHash, Role};
+use iam_core::domain::identity::{User, UserWithHash, Role, EmailVerificationState};
 use iam_core::traits::{
     MockUserRepositoryTrait, MockWalletRepositoryTrait, MockApiKeyRepositoryTrait,
     MockCacheTrait, MockEventBusTrait, MockBlockchainTrait
@@ -197,6 +197,102 @@ async fn test_register_success() {
     ).await.expect("Registration failed");
 
     assert_eq!(result.username, username);
+}
+
+/// Builds an `AuthService` from the supplied mocks with the standard test config.
+fn build_auth_service(
+    user_repo: MockUserRepositoryTrait,
+    cache: MockCacheTrait,
+    event_bus: MockEventBusTrait,
+) -> AuthService {
+    let config = mock_config();
+    let jwt_service = JwtService::new(&config.jwt_secret).unwrap();
+    let api_key_service = ApiKeyService::new(config.api_key_secret.clone()).unwrap();
+    AuthService::new(
+        Arc::new(user_repo),
+        Arc::new(MockWalletRepositoryTrait::new()),
+        Arc::new(MockApiKeyRepositoryTrait::new()),
+        config,
+        jwt_service,
+        api_key_service,
+        Arc::new(cache),
+        Arc::new(event_bus),
+        Arc::new(MockBlockchainTrait::new()),
+        mock_wallet_service(),
+    )
+}
+
+/// First resend for an unverified account: publishes the email event AND arms the
+/// per-account cooldown key so the next request can be throttled.
+#[tokio::test]
+async fn resend_verification_sends_and_arms_cooldown() {
+    let mut user_repo = MockUserRepositoryTrait::new();
+    let mut cache = MockCacheTrait::new();
+    let mut event_bus = MockEventBusTrait::new();
+
+    let user_id = Uuid::new_v4();
+    user_repo.expect_find_verification_state_by_email()
+        .returning(move |_| {
+            let state = EmailVerificationState {
+                user_id,
+                username: "pending".to_string(),
+                email_verified: false,
+                // Existing token → no set_verification_token call.
+                verification_token: Some("tok-123".to_string()),
+            };
+            Box::pin(async move { Ok(Some(state)) })
+        });
+
+    // Not in cooldown → send proceeds.
+    cache.expect_exists()
+        .returning(|_| Box::pin(async move { Ok(false) }));
+    // Email event published exactly once.
+    event_bus.expect_publish()
+        .times(1)
+        .returning(|_| Box::pin(async move { Ok(()) }));
+    // Cooldown armed exactly once after send.
+    cache.expect_set_value()
+        .times(1)
+        .returning(|_, _, _| Box::pin(async move { Ok(()) }));
+
+    let auth_service = build_auth_service(user_repo, cache, event_bus);
+    let result = auth_service.resend_verification("pending@example.com").await.expect("resend failed");
+    assert_eq!(result.status, "sent");
+}
+
+/// Resend while still inside the cooldown window: returns the SAME generic
+/// response but publishes nothing and re-arms nothing — throttle holds and no
+/// enumeration signal leaks.
+#[tokio::test]
+async fn resend_verification_suppressed_during_cooldown() {
+    let mut user_repo = MockUserRepositoryTrait::new();
+    let mut cache = MockCacheTrait::new();
+    let mut event_bus = MockEventBusTrait::new();
+
+    let user_id = Uuid::new_v4();
+    user_repo.expect_find_verification_state_by_email()
+        .returning(move |_| {
+            let state = EmailVerificationState {
+                user_id,
+                username: "pending".to_string(),
+                email_verified: false,
+                verification_token: Some("tok-123".to_string()),
+            };
+            Box::pin(async move { Ok(Some(state)) })
+        });
+
+    // Cooldown key present → throttled.
+    cache.expect_exists()
+        .returning(|_| Box::pin(async move { Ok(true) }));
+    // No email published while throttled.
+    event_bus.expect_publish().times(0);
+    // No cooldown re-arm while throttled.
+    cache.expect_set_value().times(0);
+
+    let auth_service = build_auth_service(user_repo, cache, event_bus);
+    let result = auth_service.resend_verification("pending@example.com").await.expect("resend failed");
+    // Indistinguishable from a real send.
+    assert_eq!(result.status, "sent");
 }
 
 /// Guards the registry UserAccount PDA seed against regression. The on-chain

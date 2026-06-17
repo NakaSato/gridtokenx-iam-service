@@ -184,6 +184,11 @@ impl ApiError {
             ApiError::RateLimitExceeded(_)
             | ApiError::WithCode(ErrorCode::RateLimitExceeded, _) => StatusCode::TOO_MANY_REQUESTS,
 
+            // A locked account is a client-side condition, not a server fault.
+            // Without this arm it fell through the WithCode(_) catch-all to 500,
+            // which polluted 5xx alarms and hid the real cause from clients.
+            ApiError::WithCode(ErrorCode::AccountLocked, _) => StatusCode::LOCKED,
+
             ApiError::Database(_)
             | ApiError::Redis(_)
             | ApiError::Configuration(_)
@@ -314,5 +319,33 @@ impl axum::response::IntoResponse for ApiError {
         };
 
         (status, axum::Json(error_response)).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_locked_maps_to_423_not_500() {
+        // Regression: AccountLocked used to fall through the WithCode(_) catch-all
+        // to 500, masking a client-side lockout as a server fault.
+        let err = ApiError::with_code(ErrorCode::AccountLocked, "locked");
+        assert_eq!(err.status_code(), StatusCode::LOCKED);
+        assert!(!err.status_code().is_server_error(), "lockout must not be a 5xx");
+    }
+
+    #[test]
+    fn auth_and_rate_limit_statuses_unchanged() {
+        assert_eq!(ApiError::invalid_credentials().status_code(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            ApiError::WithCode(ErrorCode::RateLimitExceeded, "slow down".to_string()).status_code(),
+            StatusCode::TOO_MANY_REQUESTS,
+        );
+        // A genuinely internal WithCode still maps to 500.
+        assert_eq!(
+            ApiError::Internal("boom".to_string()).status_code(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
     }
 }

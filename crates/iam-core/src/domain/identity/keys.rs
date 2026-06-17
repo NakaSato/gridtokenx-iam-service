@@ -25,6 +25,12 @@ pub mod cache {
         format!("iam:email_verify:{}", token)
     }
 
+    /// Resend-verification cooldown gate (keyed by user ID, not email, to keep
+    /// PII out of Redis). Presence of the key == still within the cooldown.
+    pub fn resend_verification_cooldown(user_id: &str) -> String {
+        format!("iam:resend_cooldown:{}", user_id)
+    }
+
     /// Password reset token TTL.
     pub fn password_reset_token(token: &str) -> String {
         format!("iam:password_reset:{}", token)

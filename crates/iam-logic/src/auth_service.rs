@@ -15,6 +15,10 @@ use iam_core::traits::{
 };
 use iam_core::domain::identity::Event;
 
+/// Minimum delay between successive verification-email resends for one account.
+/// Throttles email-bombing without blocking a legitimate retry for long.
+const RESEND_VERIFICATION_COOLDOWN_SECS: u64 = 60;
+
 #[derive(Clone)]
 pub struct AuthService {
     pub user_repo: Arc<dyn UserRepositoryTrait>,
@@ -514,6 +518,19 @@ impl AuthService {
             return Ok(sent);
         }
 
+        // Cooldown gate: throttle repeat resends per account to stop email-bombing
+        // and rate-limit evasion. Still returns the generic `sent` response while
+        // throttled so the response is indistinguishable from a real send (no
+        // enumeration / timing oracle). Keyed by user ID — see keys.rs.
+        let cooldown_key =
+            iam_core::domain::identity::keys::cache::resend_verification_cooldown(
+                &state.user_id.to_string(),
+            );
+        if self.cache.exists(&cooldown_key).await.unwrap_or(false) {
+            info!("resend within cooldown window — suppressing re-send");
+            return Ok(sent);
+        }
+
         let token = match state.verification_token {
             Some(token) => token,
             None => {
@@ -527,6 +544,15 @@ impl AuthService {
             &state.user_id, &state.username, email, &token,
         )).await {
             tracing::warn!("failed to publish VerificationEmailRequested event: {}", e);
+        }
+
+        // Arm the cooldown only after a (best-effort) send. Non-fatal on failure —
+        // worst case the next request is allowed through, which is the safe side.
+        if let Err(e) = self
+            .cache_set(&cooldown_key, &true, Some(RESEND_VERIFICATION_COOLDOWN_SECS))
+            .await
+        {
+            tracing::warn!("failed to set resend cooldown key (non-critical): {}", e);
         }
 
         Ok(sent)

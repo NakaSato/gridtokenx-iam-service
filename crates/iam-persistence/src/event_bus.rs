@@ -23,6 +23,20 @@ const DEFAULT_STREAM: &str = "gridtokenx:events:v1";
 /// Maximum stream length (keep ~100k entries to bound memory).
 const MAX_STREAM_LEN: usize = 100_000;
 
+/// Event types that are audit-only and must NOT be dual-written to Kafka.
+///
+/// `ApiKeyVerified` fires on every gateway API-key check — hundreds of
+/// thousands per day — and no Kafka consumer handles it. Outboxing it floods
+/// `iam_outbox_events` and head-of-line-blocks real notification events (e.g.
+/// `VerificationEmailRequested`) behind a backlog the producer cannot drain.
+/// These events stay on the Redis stream (the audit trail) only.
+const KAFKA_SKIP_EVENT_TYPES: &[&str] = &["ApiKeyVerified"];
+
+/// Whether an event must skip the Kafka dual-write (see [`KAFKA_SKIP_EVENT_TYPES`]).
+fn skip_kafka_dual_write(event_type: &str) -> bool {
+    KAFKA_SKIP_EVENT_TYPES.contains(&event_type)
+}
+
 /// Redis Streams event bus.
 #[derive(Clone)]
 pub struct EventBus {
@@ -119,6 +133,13 @@ impl EventBus {
     /// outbox enqueue degrades to the fire-and-forget path rather than failing
     /// the caller's request (Redis remains the synchronous primary write).
     async fn dispatch_kafka(&self, event: &Event) {
+        // Audit-only events (e.g. ApiKeyVerified) stay on the Redis stream and
+        // are never sent to Kafka — they have no consumer there and would
+        // swamp the outbox.
+        if skip_kafka_dual_write(&event.event_type) {
+            return;
+        }
+
         match (&self.outbox, self.kafka.is_some()) {
             (Some(outbox), true) => {
                 if let Err(e) = outbox.enqueue(event).await {
@@ -234,5 +255,24 @@ mod tests {
             .with_data(serde_json::json!({"key": "value"}));
         assert!(event.data.is_some());
         assert_eq!(event.data.unwrap()["key"], "value");
+    }
+
+    #[test]
+    fn api_key_verified_skips_kafka_dual_write() {
+        // The high-volume, consumer-less audit event must not be outboxed.
+        assert!(skip_kafka_dual_write("ApiKeyVerified"));
+    }
+
+    #[test]
+    fn notification_events_still_dual_write_to_kafka() {
+        // Events a Kafka consumer actually handles must keep reaching Kafka.
+        for et in [
+            "VerificationEmailRequested",
+            "UserRegistered",
+            "EmailVerified",
+            "PasswordResetRequested",
+        ] {
+            assert!(!skip_kafka_dual_write(et), "{et} must dual-write to Kafka");
+        }
     }
 }
