@@ -19,8 +19,24 @@ set -euo pipefail
 BASE="${IAM_BASE:-http://localhost:4010}"
 GRPC_ADDR="${GRPC_ADDR:-localhost:5010}"
 PROTO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../crates/iam-protocol/proto" 2>/dev/null && pwd || true)"
-# A syntactically valid base58 Solana address (wrapped-SOL mint) for the link.
-LINK_ADDR='So11111111111111111111111111111111111111112'
+# LinkWallet validates the address as a real 32-byte Solana pubkey AND it is
+# globally unique — mint a fresh valid base58 pubkey per run so reruns don't
+# collide. Needs python3 for the base58 encode.
+gen_pubkey() {
+  python3 - <<'PY'
+import os
+b=os.urandom(32)
+a='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+n=int.from_bytes(b,'big'); s=''
+while n>0:
+    n,r=divmod(n,58); s=a[r]+s
+pad=0
+for c in b:
+    if c==0: pad+=1
+    else: break
+print('1'*pad+s)
+PY
+}
 
 PASS=0; FAIL=0; SKIP=0
 ok()   { echo "✅ $1"; PASS=$((PASS+1)); }
@@ -31,6 +47,11 @@ if ! command -v grpcurl >/dev/null 2>&1 || [[ ! -f "$PROTO_DIR/identity.proto" ]
   skip "LinkWallet/GetUserWallet suite" "grpcurl missing or identity.proto not at $PROTO_DIR"
   echo "── $PASS passed, $FAIL failed, $SKIP skipped ──"; exit 0
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+  skip "LinkWallet/GetUserWallet suite" "python3 needed to mint a valid base58 pubkey for the link"
+  echo "── $PASS passed, $FAIL failed, $SKIP skipped ──"; exit 0
+fi
+LINK_ADDR="$(gen_pubkey)"
 
 json_field()  { echo "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -1 | cut -d'"' -f4 || true; }
 gjson_field() { echo "$1" | grep -o "\"$2\": *\"[^\"]*\"" | head -1 | sed 's/.*: *"//;s/"$//' || true; }

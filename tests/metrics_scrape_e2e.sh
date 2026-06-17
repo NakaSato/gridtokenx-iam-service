@@ -28,11 +28,15 @@ BODY=$(echo "$R" | sed '$d'); CODE=$(echo "$R" | tail -1)
 
 [ "$CODE" = "200" ] && ok "GET /metrics → 200" || bad "GET /metrics → $CODE (expected 200)"
 
-echo "$BODY" | grep -q '# TYPE' \
+# Use a here-string, NOT `echo "$BODY" | grep -q …`: grep -q exits on the first
+# match without draining stdin, so echo takes a SIGPIPE (141); with `set -o
+# pipefail` that makes the whole pipeline "fail" and trips the `|| bad` branch
+# even though the pattern matched. The big 700+-line body makes it deterministic.
+grep -qa '# TYPE' <<<"$BODY" \
   && ok "body is Prometheus exposition format (# TYPE present)" \
   || bad "no '# TYPE' lines — not Prometheus format: ${BODY:0:120}"
 
-echo "$BODY" | grep -q 'iam_http_requests_total' \
+grep -qa 'iam_http_requests_total' <<<"$BODY" \
   && ok "iam_http_requests_total series exported" \
   || bad "iam_http_requests_total missing — middleware not feeding the recorder"
 
