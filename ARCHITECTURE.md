@@ -43,7 +43,7 @@ graph TD
 | **[iam-service](bin/iam-service)** | Adapter | Entry point, configuration loading, and **Dependency Injection** (orchestration of all layers). |
 | **[iam-api](crates/iam-api)** | Adapter | ConnectRPC (gRPC) and REST (Axum) handlers. High-concurrency async edge. |
 | **[iam-logic](crates/iam-logic)** | Domain | Core business rules: `AuthService`, `JwtService`, `ApiKeyService`, password hashing, and blockchain provider logic. |
-| **[iam-persistence](crates/iam-persistence)** | Infrastructure | Trait implementations: SQLx repos (user/wallet/api_key), Redis cache, and an event bus (Redis Streams + optional Kafka dual-write). |
+| **[iam-persistence](crates/iam-persistence)** | Infrastructure | Trait implementations: SQLx repos (user/wallet/api_key), Redis cache, and an event bus (Redis Streams + optional Kafka dual-write; audit-only events are skipped from the dual-write — see Auth-Surface Hardening). |
 | **[iam-protocol](crates/iam-protocol)** | Contract | `identity.proto` → codegen via `connectrpc-build`/`buffa-build` (`build.rs`). 7 RPC methods. |
 | **[iam-core](crates/iam-core)** | Primitives | Domain models, **Trait definitions**, and shared error types. Zero-dependency heart. |
 
@@ -116,6 +116,37 @@ Passwords are never stored in plain text or logged.
 - **Legacy verification**: `verify_password` also accepts legacy **Bcrypt** hashes so pre-migration credentials keep working.
 - **KDF versioning**: the `users.kdf_version` column tracks the key-derivation generation (`1` = legacy 100k PBKDF2, `2` = 600k), enabling transparent re-hash-on-login migration without forcing resets.
 - **CPU safety**: all hash/verify calls run on `spawn_blocking`, bounded by `AUTH_CPU_SEMAPHORE_LIMIT` (see Concurrency below).
+
+### Auth-Surface Hardening
+
+The public auth surface is throttled and fail-closed at several layers:
+
+- **Per-IP rate limits** (`crates/iam-api/src/middleware/rate_limit.rs:19`, `limits_for_path`):
+  `/login` = 10/60s, `/register` = 5/3600s, everything else = 100/60s. The
+  middleware is layered **before** the router nests under `/api/v1/auth`, so it
+  sees the prefix-stripped path (`/login`, not `/api/v1/auth/login`); budgets are
+  matched by path **suffix**. Substring matching on the full path silently fell
+  through to the 100/60 default and left the auth endpoints effectively
+  unthrottled.
+- **Account lockout** maps to **HTTP 423 LOCKED**
+  (`crates/iam-core/src/error/types.rs:190`), not 500. A lockout is a client
+  condition; routing it through the generic `WithCode(_)` catch-all to 500
+  polluted 5xx alarms and masked the cause. Error code `1006` carries the
+  semantic.
+- **Resend-verification cooldown** — a 60s per-account gate
+  (`crates/iam-logic/src/auth_service.rs:20`, `RESEND_VERIFICATION_COOLDOWN_SECS`)
+  throttles email-bombing. Keyed by **user ID, not email** (keeps PII out of
+  Redis) and still returns the generic `sent` response while throttled, so there
+  is no enumeration/timing oracle. The cooldown is armed best-effort (fail-open).
+- **Kafka dual-write skip** — audit-only, consumer-less events
+  (`KAFKA_SKIP_EVENT_TYPES`, `crates/iam-persistence/src/event_bus.rs:33`) stay on
+  the Redis audit stream only. `ApiKeyVerified` fires on every gateway API-key
+  check (hundreds of thousands/day); outboxing it floods `iam_outbox_events` and
+  head-of-line-blocks real notification events.
+
+Behaviors are pinned by the live E2E suite in `tests/*_e2e.sh` (lockout asserts
+423, plus resend cooldown, kafka dual-write skip, rate limiting, health-ready
+degraded, …).
 
 ## ⚡ Concurrency & CPU Safety
 
