@@ -1,7 +1,11 @@
-# Phase 3: IAM Service Dockerfile Alignment
+# IAM Service — distroless image: binary + its shared libs only.
+# No Rust toolchain, no target/ cache, no OS package manager in the final image.
+# syntax=docker/dockerfile:1.7
+# -----------------------------------------------------------------------------
+# Stage 1: Builder (compiles, then collects binary + ldd deps into /out)
+# -----------------------------------------------------------------------------
 FROM rust:1.89-bookworm AS builder
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
@@ -11,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     git \
     curl \
     protobuf-compiler \
+    busybox-static \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -22,43 +27,43 @@ COPY gridtokenx-telemetry/ gridtokenx-telemetry/
 
 WORKDIR /app/gridtokenx-iam-service
 
-# Build in release mode
+# Build release binary. target/ stays in this stage only — never copied forward.
 RUN cargo build --release --bin gridtokenx-iam-service
 
-# -----------------------------------------------------------------------------
-# Stage 2: Runtime (Minimal Debian)
-# -----------------------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
+# Collect the binary + the non-glibc shared libs it needs into a flat lib/ folder.
+# glibc core + the dynamic loader are provided by the distroless/cc base, so skip
+# them to avoid clashing with the base image's runtime.
+RUN set -eux; \
+    BIN=target/release/gridtokenx-iam-service; \
+    mkdir -p /out/lib; \
+    cp "$BIN" /out/iam-service; \
+    cp /bin/busybox /out/busybox; \
+    ldd "$BIN" | awk '/=>/{print $3} !/=>/{print $1}' | grep -E '^/' | sort -u | while read -r lib; do \
+        case "$lib" in \
+            */ld-linux*|*/libc.so*|*/libm.so*|*/libpthread*|*/libdl.so*|*/librt.so*) continue;; \
+        esac; \
+        cp -Lv "$lib" /out/lib/; \
+    done
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    tzdata \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN groupadd -g 1000 appgroup && \
-    useradd -u 1000 -g appgroup -s /bin/sh appuser
+# -----------------------------------------------------------------------------
+# Stage 2: Runtime (distroless — glibc + libgcc/libstdc++, ca-certs, tzdata only)
+# -----------------------------------------------------------------------------
+FROM gcr.io/distroless/cc-debian12 AS runtime
 
 WORKDIR /app
 
-# Copy binary from builder stage
-COPY --from=builder /app/gridtokenx-iam-service/target/release/gridtokenx-iam-service /app/iam-service
+# Binary, its lib folder, the static busybox (for the healthcheck), and migrations.
+COPY --from=builder /out/iam-service /app/iam-service
+COPY --from=builder /out/lib/ /app/lib/
+COPY --from=builder /out/busybox /usr/bin/busybox
 COPY --from=builder /app/gridtokenx-iam-service/migrations /app/migrations
-
-# Ensure appuser owns the binary
-RUN chown -R appuser:appgroup /app
-
-# Use non-root user
-USER appuser
 
 # Expose ports (HTTP: 4010, gRPC: 4020)
 EXPOSE 4010 4020
 
 # Default Configuration
-ENV ENVIRONMENT=production \
+ENV LD_LIBRARY_PATH=/app/lib \
+    ENVIRONMENT=production \
     IAM_PORT=4010 \
     IAM_GRPC_PORT=4020 \
     LOG_LEVEL=info \
