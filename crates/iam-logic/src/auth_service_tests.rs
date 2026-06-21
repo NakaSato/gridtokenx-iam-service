@@ -398,12 +398,24 @@ async fn verify_email_provisions_custodial_wallet_preserves_location() {
     wallet_repo.expect_mark_registered()
         .returning(|_, _, _| Box::pin(async move { Ok(()) }));
 
+    // On-chain registration now runs in a DETACHED task (verify_email no longer
+    // blocks on it). mark_user_onboarded firing is the tail of that task, so the
+    // test signals on it and waits below — otherwise the mocks' (default times(1))
+    // expectations would be checked at drop before the task ran, flakily failing.
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+
     // THE Fix-1 assertion: coordinates flow through unchanged, never 0.0/0.0.
     user_repo.expect_mark_user_onboarded()
         .withf(move |_uid, _utype, lat, long, _pda, _sig| {
             (*lat - LAT).abs() < f64::EPSILON && (*long - LONG).abs() < f64::EPSILON
         })
-        .returning(|_, _, _, _, _, _| Box::pin(async move { Ok(()) }));
+        .returning(move |_, _, _, _, _, _| {
+            let done_tx = done_tx.clone();
+            Box::pin(async move {
+                let _ = done_tx.send(());
+                Ok(())
+            })
+        });
 
     event_bus.expect_publish()
         .returning(|_| Box::pin(async move { Ok(()) }));
@@ -431,4 +443,13 @@ async fn verify_email_provisions_custodial_wallet_preserves_location() {
 
     assert!(result.success);
     assert!(result.wallet_address.is_some(), "custodial wallet address must propagate to result");
+
+    // Drive + await the detached on-chain task: mark_user_onboarded sends here only
+    // after register_user_on_chain → confirm → mark_registered all ran and the
+    // lat/long `withf` matched. Awaiting also lets the current-thread runtime poll
+    // the spawned task to completion so every mock expectation is satisfied.
+    tokio::time::timeout(std::time::Duration::from_secs(5), done_rx.recv())
+        .await
+        .expect("background on-chain registration did not complete in time")
+        .expect("on-chain bookkeeping channel closed before signaling");
 }

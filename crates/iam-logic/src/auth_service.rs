@@ -405,7 +405,7 @@ impl AuthService {
         // Insert the wallet row and write the key material + primary address in a
         // single DB transaction: a key without a wallet (or an address without a
         // recoverable key) must never be observable, even across a crash.
-        let mut wallet = self
+        let wallet = self
             .wallet_repo
             .persist_custodial_wallet(
                 user.id,
@@ -418,82 +418,154 @@ impl AuthService {
             )
             .await?;
 
-        // ── Best-effort on-chain registration (Registry PDA) ──────────
-        // Chain Bridge / validator may be down in dev; the wallet still works
-        // off-chain and registration can be retried via InitializeUserWallet.
+        // ── On-chain registration (Registry PDA) — deferred, detached ──
+        // register_user_on_chain retries with backoff (~14s) and the PDA
+        // confirmation poll adds up to ~15s. Awaiting that here would block the
+        // email-verification HTTP response for up to ~30s on a slow/oversubscribed
+        // validator (the e2e golden path tripped its 10s client timeout this way).
+        // The wallet is already persisted and usable off-chain, and registration is
+        // best-effort + separately retryable (InitializeUserWallet / POST
+        // /me/registration), so it must not gate verification. Spawn it; the task
+        // flips `blockchain_registered` in the DB once the tx confirms.
         let user_type = user.user_type.unwrap_or(UserType::Consumer);
-        let (blockchain_user_type, user_type_str) = match user_type {
-            UserType::Prosumer => (gridtokenx_blockchain_core::rpc::instructions::UserType::Prosumer, "Prosumer"),
-            UserType::Consumer => (gridtokenx_blockchain_core::rpc::instructions::UserType::Consumer, "Consumer"),
-        };
-        match self
-            .blockchain_service
-            .register_user_on_chain(pubkey, blockchain_user_type, 0, 0, 0, 0)
-            .await
-        {
-            Ok(sig) if self.confirm_user_registered(&pubkey).await => {
-                let sig_str = sig.to_string();
-                if let Err(e) = self.wallet_repo.mark_registered(user.id, &wallet_address, &sig_str).await {
-                    tracing::warn!(
-                        "mark_registered failed after on-chain register for wallet {} (user {}): {}",
-                        wallet_address, user.id, e
-                    );
-                }
+        self.spawn_onchain_registration(
+            user.id,
+            pubkey,
+            wallet_address.clone(),
+            user_type,
+            user.latitude.unwrap_or(0.0),
+            user.longitude.unwrap_or(0.0),
+        );
 
-                let pda = self
-                    .config
-                    .registry_program_id
-                    .parse::<solana_sdk::pubkey::Pubkey>()
-                    .ok()
-                    .map(|program_id| {
-                        solana_sdk::pubkey::Pubkey::find_program_address(
-                            &[b"user", pubkey.as_ref()],
-                            &program_id,
-                        )
-                        .0
-                        .to_string()
-                    })
-                    .unwrap_or_default();
-                if let Err(e) = self
-                    .user_repo
-                    .mark_user_onboarded(
-                        user.id,
-                        user_type_str,
-                        user.latitude.unwrap_or(0.0),
-                        user.longitude.unwrap_or(0.0),
-                        &pda,
-                        &sig_str,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        "mark_user_onboarded failed after on-chain register for user {}: {}",
-                        user.id, e
-                    );
-                }
-
-                wallet.blockchain_registered = true;
-                wallet.blockchain_tx_signature = Some(sig_str);
-                wallet.user_account_pda = (!pda.is_empty()).then_some(pda);
-            }
-            Ok(_) => {
-                // Submitted but the user PDA never became observable — treat as
-                // unregistered (off-chain wallet still works; retry via
-                // InitializeUserWallet). Do NOT mark registered on an unconfirmed tx.
-                tracing::warn!(
-                    "On-chain registration submitted but not confirmed for custodial wallet {} (user {}) — leaving unregistered",
-                    wallet_address, user.id
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "On-chain registration failed for custodial wallet {} (user {}): {}",
-                    wallet_address, user.id, e
-                );
-            }
-        }
-
+        // Returned wallet reflects the just-persisted row (blockchain_registered =
+        // false); the detached task updates the DB once the tx confirms.
         Ok(wallet)
+    }
+
+    /// Spawns a detached task that registers a freshly provisioned custodial
+    /// wallet on-chain (Registry PDA) and, once the tx confirms, flips the
+    /// `blockchain_registered` / onboarding columns in the DB.
+    ///
+    /// Detached because `register_user_on_chain`'s retry-with-backoff (~14s) plus
+    /// the PDA confirmation poll (~15s) must never block the caller (email
+    /// verification). Best-effort: every failure is logged and remains retryable
+    /// via `InitializeUserWallet` / `POST /me/registration`.
+    fn spawn_onchain_registration(
+        &self,
+        user_id: Uuid,
+        pubkey: solana_sdk::pubkey::Pubkey,
+        wallet_address: String,
+        user_type: UserType,
+        latitude: f64,
+        longitude: f64,
+    ) {
+        let blockchain_service = Arc::clone(&self.blockchain_service);
+        let wallet_repo = Arc::clone(&self.wallet_repo);
+        let user_repo = Arc::clone(&self.user_repo);
+        let config = Arc::clone(&self.config);
+        tokio::spawn(async move {
+            let (blockchain_user_type, user_type_str) = match user_type {
+                UserType::Prosumer => (
+                    gridtokenx_blockchain_core::rpc::instructions::UserType::Prosumer,
+                    "Prosumer",
+                ),
+                UserType::Consumer => (
+                    gridtokenx_blockchain_core::rpc::instructions::UserType::Consumer,
+                    "Consumer",
+                ),
+            };
+            match blockchain_service
+                .register_user_on_chain(pubkey, blockchain_user_type, 0, 0, 0, 0)
+                .await
+            {
+                Ok(sig) if Self::confirm_registered(&blockchain_service, &config, &pubkey).await => {
+                    let sig_str = sig.to_string();
+                    if let Err(e) = wallet_repo
+                        .mark_registered(user_id, &wallet_address, &sig_str)
+                        .await
+                    {
+                        tracing::warn!(
+                            "mark_registered failed after on-chain register for wallet {} (user {}): {}",
+                            wallet_address, user_id, e
+                        );
+                    }
+
+                    let pda = config
+                        .registry_program_id
+                        .parse::<solana_sdk::pubkey::Pubkey>()
+                        .ok()
+                        .map(|program_id| {
+                            solana_sdk::pubkey::Pubkey::find_program_address(
+                                &[b"user", pubkey.as_ref()],
+                                &program_id,
+                            )
+                            .0
+                            .to_string()
+                        })
+                        .unwrap_or_default();
+                    if let Err(e) = user_repo
+                        .mark_user_onboarded(
+                            user_id,
+                            user_type_str,
+                            latitude,
+                            longitude,
+                            &pda,
+                            &sig_str,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            "mark_user_onboarded failed after on-chain register for user {}: {}",
+                            user_id, e
+                        );
+                    }
+
+                    info!(
+                        "🔗 On-chain registration confirmed for custodial wallet {} (user {})",
+                        wallet_address, user_id
+                    );
+                }
+                Ok(_) => {
+                    // Submitted but the user PDA never became observable — treat as
+                    // unregistered (off-chain wallet still works; retry via
+                    // InitializeUserWallet). Do NOT mark registered on an unconfirmed tx.
+                    tracing::warn!(
+                        "On-chain registration submitted but not confirmed for custodial wallet {} (user {}) — leaving unregistered",
+                        wallet_address, user_id
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "On-chain registration failed for custodial wallet {} (user {}): {}",
+                        wallet_address, user_id, e
+                    );
+                }
+            }
+        });
+    }
+
+    /// `&self`-free variant of [`Self::confirm_user_registered`] usable from a
+    /// detached task: polls the Registry user PDA for ~15s.
+    async fn confirm_registered(
+        blockchain_service: &Arc<dyn BlockchainTrait>,
+        config: &Config,
+        pubkey: &solana_sdk::pubkey::Pubkey,
+    ) -> bool {
+        let program_id = match config.registry_program_id.parse::<solana_sdk::pubkey::Pubkey>() {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
+            &[b"user", pubkey.as_ref()],
+            &program_id,
+        );
+        for _ in 0..20 {
+            if blockchain_service.account_exists(pda).await.unwrap_or(false) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+        }
+        false
     }
 
     /// Re-sends the verification email for an unverified account.
@@ -749,20 +821,9 @@ impl AuthService {
     /// the account exists; callers MUST gate `mark_registered` /
     /// `mark_user_onboarded` on this, or a failed tx is recorded as success.
     async fn confirm_user_registered(&self, pubkey: &solana_sdk::pubkey::Pubkey) -> bool {
-        let program_id = match self.config.registry_program_id.parse::<solana_sdk::pubkey::Pubkey>() {
-            Ok(p) => p,
-            Err(_) => return false,
-        };
-        let (pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(&[b"user", pubkey.as_ref()], &program_id);
         // ~15s window: Chain Bridge reads at `confirmed` (~1-2s) but the
         // provider-side retry can land the tx several seconds after the call returns.
-        for _ in 0..20 {
-            if self.blockchain_service.account_exists(pda).await.unwrap_or(false) {
-                return true;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
-        }
-        false
+        Self::confirm_registered(&self.blockchain_service, &self.config, pubkey).await
     }
 
     pub async fn onboard_user_on_chain(
