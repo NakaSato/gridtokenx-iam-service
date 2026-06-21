@@ -30,7 +30,11 @@ impl BlockchainTrait for BlockchainProvider {
         let service = self.service.clone();
         async move {
             let mut attempts = 0;
-            let max_attempts = 3;
+            // One retry only. Each attempt is capped at 15s (legit on-chain reg
+            // measures ~14s under load), so worst-case wall time is 15 + 2s backoff
+            // + 15 = 32s. This MUST stay under the HTTP TimeoutLayer budget
+            // (REQUEST_TIMEOUT_SECS, default 40s) or verify returns 408 mid-retry.
+            let max_attempts = 1;
 
             loop {
                 // ── Timeout & Retry ──────────────────────────────────────────

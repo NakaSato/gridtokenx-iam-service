@@ -144,8 +144,12 @@ impl Config {
             database_min_connections: env::var("DATABASE_MIN_CONNECTIONS")
                 .unwrap_or_else(|_| "5".to_string())
                 .parse()?,
+            // 40s default: must exceed the synchronous on-chain verify worst-case
+            // (~32s = one register retry of 15s+2s+15s, blockchain_provider.rs) or
+            // GET /auth/verify returns 408 under load. Stays below the e2e client's
+            // 45s read budget (IAM_VERIFY_TIMEOUT).
             request_timeout_secs: env::var("REQUEST_TIMEOUT_SECS")
-                .unwrap_or_else(|_| "30".to_string())
+                .unwrap_or_else(|_| "40".to_string())
                 .parse()?,
             global_concurrency_limit: env::var("GLOBAL_CONCURRENCY_LIMIT")
                 .unwrap_or_else(|_| "100".to_string())
