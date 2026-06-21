@@ -164,9 +164,18 @@ impl ApiError {
             ApiError::BadRequest(_)
             | ApiError::Validation(_)
             | ApiError::ValidationWithField { .. }
+            // All validation codes (VAL_3xxx) are client input faults -> 400, never 500.
+            // Without these arms InvalidEmail/InvalidFormat/InvalidPassword/etc. fell
+            // through the WithCode(_) catch-all to 500, polluting 5xx alarms and
+            // mislabeling a bad email as a server error to clients.
             | ApiError::WithCode(ErrorCode::InvalidInput, _)
+            | ApiError::WithCode(ErrorCode::MissingRequiredField, _)
+            | ApiError::WithCode(ErrorCode::InvalidFormat, _)
             | ApiError::WithCode(ErrorCode::InvalidWalletAddress, _)
-            | ApiError::WithCode(ErrorCode::InvalidAmount, _) => StatusCode::BAD_REQUEST,
+            | ApiError::WithCode(ErrorCode::InvalidAmount, _)
+            | ApiError::WithCode(ErrorCode::InvalidEmail, _)
+            | ApiError::WithCode(ErrorCode::InvalidPassword, _)
+            | ApiError::WithCode(ErrorCode::PasswordTooWeak, _) => StatusCode::BAD_REQUEST,
 
             ApiError::NotFound(_) | ApiError::WithCode(ErrorCode::NotFound, _) => {
                 StatusCode::NOT_FOUND
@@ -333,6 +342,31 @@ mod tests {
         let err = ApiError::with_code(ErrorCode::AccountLocked, "locked");
         assert_eq!(err.status_code(), StatusCode::LOCKED);
         assert!(!err.status_code().is_server_error(), "lockout must not be a 5xx");
+    }
+
+    #[test]
+    fn validation_codes_map_to_400_not_500() {
+        // Regression: VAL_3xxx codes other than InvalidInput/InvalidWalletAddress/
+        // InvalidAmount used to fall through the WithCode(_) catch-all to 500, so a
+        // bad email/password surfaced as a server fault and polluted 5xx alarms.
+        for code in [
+            ErrorCode::InvalidInput,
+            ErrorCode::MissingRequiredField,
+            ErrorCode::InvalidFormat,
+            ErrorCode::InvalidWalletAddress,
+            ErrorCode::InvalidAmount,
+            ErrorCode::InvalidEmail,
+            ErrorCode::InvalidPassword,
+            ErrorCode::PasswordTooWeak,
+        ] {
+            let err = ApiError::with_code(code, "bad input");
+            assert_eq!(
+                err.status_code(),
+                StatusCode::BAD_REQUEST,
+                "{code:?} must map to 400",
+            );
+            assert!(!err.status_code().is_server_error(), "{code:?} must not be 5xx");
+        }
     }
 
     #[test]

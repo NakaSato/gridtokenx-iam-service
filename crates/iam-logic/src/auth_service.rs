@@ -660,6 +660,13 @@ impl AuthService {
         label: Option<String>,
         is_primary: bool,
     ) -> Result<UserWallet> {
+        // Reject malformed addresses before any persistence — a wallet must be a valid
+        // base58 Solana pubkey. Previously this was only enforced in the auto-on-chain
+        // registration branch below, so a non-onboarded user could link an invalid
+        // address and get a 200. Mirror that parse up front for every caller.
+        gridtokenx_blockchain_core::BlockchainService::parse_pubkey(&wallet_address)
+            .map_err(|e| ApiError::BadRequest(format!("invalid wallet address: {e}")))?;
+
         let has_existing = self.wallet_repo.has_any_wallet(user_id).await?;
 
         if has_existing && is_primary {
