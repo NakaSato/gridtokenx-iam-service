@@ -7,15 +7,21 @@
 #   invalid / unknown key → valid:false (RPC SUCCEEDS — the key is simply not
 #                           valid; mirrors VerifyToken's garbage-token contract)
 #   malformed key         → valid:false
+#   valid key             → valid:true + the stored role
 #
-# The happy path (a real key → valid:true + role) is NOT exercised: IAM exposes
-# no over-the-wire API-key mint endpoint, so a shell E2E cannot obtain a live
-# key. That path is covered by iam-logic unit tests against ApiKeyService.
+# IAM exposes no over-the-wire API-key mint endpoint, so the happy path mints a
+# key the same way ApiKeyService does — key_hash = sha256(key ‖ API_KEY_SECRET),
+# hex (jwt_service.rs hash_key) — and seeds it straight into the shared `api_keys`
+# table via the Postgres container. The secret is read from the iam container's
+# env so the hash matches what the running service computes. Degrades to skip if
+# docker/openssl/psql or the secret are unavailable.
 # Requires the stack up + grpcurl.
 set -euo pipefail
 
 GRPC_ADDR="${GRPC_ADDR:-localhost:5010}"
 PROTO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../crates/iam-protocol/proto" 2>/dev/null && pwd || true)"
+IAM_CTR="${IAM_CTR:-gridtokenx-iam-service}"
+PG_CTR="${PG_CTR:-gridtokenx-postgres}"
 
 PASS=0; FAIL=0; SKIP=0
 ok()   { echo "✅ $1"; PASS=$((PASS+1)); }
@@ -60,7 +66,38 @@ R=$(call '{"key":""}')
 not_valid "$R" && ok "empty key → not valid" \
   || bad "empty key not rejected: ${R:0:160}"
 
-skip "valid-key happy path" "no over-the-wire API-key mint endpoint — covered by iam-logic unit tests"
+# ── Happy path: seed a real key with a service-matching hash ──────────────────
+echo "→ VerifyApiKey with a valid (seeded) key"
+psql_iam() { # run SQL in the shared DB using the container's own POSTGRES_* env
+  docker exec "$PG_CTR" sh -c \
+    'psql -v ON_ERROR_STOP=1 -tAq -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$0"' "$1" 2>/dev/null
+}
+if ! command -v openssl >/dev/null 2>&1 || ! command -v docker >/dev/null 2>&1; then
+  skip "valid-key happy path" "openssl/docker missing — cannot mint+seed a live key"
+elif ! SECRET="$(docker exec "$IAM_CTR" printenv API_KEY_SECRET 2>/dev/null)" || [ -z "$SECRET" ]; then
+  skip "valid-key happy path" "could not read API_KEY_SECRET from '$IAM_CTR'"
+elif ! docker exec "$PG_CTR" sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
+  skip "valid-key happy path" "Postgres container '$PG_CTR' not ready — cannot seed key"
+else
+  KEY="ak_$(openssl rand -hex 16)"
+  # key_hash = hex(sha256(key-bytes ‖ secret-bytes)) — exactly ApiKeyService::hash_key
+  HASH="$(printf '%s%s' "$KEY" "$SECRET" | openssl dgst -sha256 | awk '{print $NF}')"
+  KROLE="trading-api"
+  if psql_iam "INSERT INTO api_keys (name, key_hash, role, is_active) VALUES ('e2e-verify-${RANDOM}', '${HASH}', '${KROLE}', true)" >/dev/null; then
+    R=$(call "{\"key\":\"${KEY}\"}")
+    if echo "$R" | grep -q '"valid": true'; then
+      ok "valid key → valid:true"
+      echo "$R" | grep -q "\"role\": \"${KROLE}\"" && ok "valid key echoes stored role ($KROLE)" \
+        || bad "role mismatch (expected $KROLE): ${R:0:160}"
+    else
+      bad "seeded key → not valid: ${R:0:160}"
+    fi
+    # best-effort cleanup so reruns don't accrete rows
+    psql_iam "DELETE FROM api_keys WHERE key_hash = '${HASH}'" >/dev/null || true
+  else
+    skip "valid-key happy path" "INSERT into api_keys failed (schema/perms?)"
+  fi
+fi
 
 echo "── $PASS passed, $FAIL failed, $SKIP skipped ──"
 [ "$FAIL" -eq 0 ]
