@@ -89,19 +89,40 @@ impl ApiKeyService {
         Ok((key, key_hash))
     }
 
+    /// Verifies a presented key against a stored hash in constant time.
+    ///
+    /// Recomputes the HMAC of `key` and compares against `stored_hash` using
+    /// `Mac::verify_slice`, which is constant-time — no early-exit byte compare
+    /// that could leak the hash via timing. A malformed (non-hex) `stored_hash`
+    /// is treated as a non-match, not an error.
     pub fn verify_key(&self, key: &str, stored_hash: &str) -> Result<bool> {
-        let computed_hash = self.hash_key(key)?;
-        Ok(computed_hash == stored_hash)
+        use hmac::Mac as _;
+        let Ok(expected) = hex::decode(stored_hash) else {
+            return Ok(false);
+        };
+        Ok(self.mac(key)?.verify_slice(&expected).is_ok())
     }
 
+    /// Derives the stored fingerprint of an API key as lowercase-hex
+    /// HMAC-SHA256(secret, key).
+    ///
+    /// HMAC (keyed) rather than a plain `SHA-256(key || secret)` digest: the
+    /// latter is a non-standard keyed construction vulnerable to length
+    /// extension, whereas HMAC is the correct primitive for keyed hashing.
     pub fn hash_key(&self, key: &str) -> Result<String> {
-        use sha2::{Digest, Sha256};
+        use hmac::Mac as _;
+        Ok(hex::encode(self.mac(key)?.finalize().into_bytes()))
+    }
 
-        let mut hasher = Sha256::new();
-        hasher.update(key.as_bytes());
-        hasher.update(self.secret.as_bytes());
-
-        Ok(format!("{:x}", hasher.finalize()))
+    /// Builds an HMAC-SHA256 instance keyed by the service secret, pre-loaded
+    /// with `key` as the message. Shared by `hash_key` and `verify_key` so both
+    /// derive identically.
+    fn mac(&self, key: &str) -> Result<hmac::Hmac<sha2::Sha256>> {
+        use hmac::Mac as _;
+        let mut mac = <hmac::Hmac<sha2::Sha256>>::new_from_slice(self.secret.as_bytes())
+            .map_err(|e| ApiError::internal(format!("HMAC key init failed: {e}")))?;
+        mac.update(key.as_bytes());
+        Ok(mac)
     }
 }
 
@@ -184,5 +205,44 @@ mod tests {
         
         // Verify failure
         assert!(!service.verify_key("wrong-key", &hash).unwrap());
+    }
+
+    /// Pins `hash_key` to HMAC-SHA256(secret, key) and proves the old
+    /// SHA-256(key || secret) construction no longer verifies — guards the
+    /// keyed-hash swap. Vector matches the re-seed migration
+    /// (20260629000000_reseed_default_api_key_hmac.sql).
+    #[test]
+    fn hash_key_is_hmac_sha256_and_rejects_legacy_digest() {
+        use sha2::{Digest, Sha256};
+
+        let secret = "test-api-key-secret-for-development-and-testing".to_string();
+        let key = "engineering-department-api-key-2025";
+        let service = ApiKeyService::new(secret.clone()).unwrap();
+
+        // Exact HMAC vector shipped in the re-seed migration.
+        let hmac_hex = service.hash_key(key).unwrap();
+        assert_eq!(
+            hmac_hex,
+            "0c9b5d31c7e6ec3963f5c7de72c4a6d3346a2991b7021e2f70e7392b5662ac21"
+        );
+        assert!(service.verify_key(key, &hmac_hex).unwrap());
+
+        // The legacy SHA-256(key || secret) digest must NOT verify under HMAC.
+        let mut h = Sha256::new();
+        h.update(key.as_bytes());
+        h.update(secret.as_bytes());
+        let legacy_hex = format!("{:x}", h.finalize());
+        assert!(
+            !service.verify_key(key, &legacy_hex).unwrap(),
+            "legacy SHA-256(key||secret) digest must no longer authenticate"
+        );
+    }
+
+    /// A malformed (non-hex) stored hash is a non-match, never an error — so a
+    /// corrupt DB row can't 500 the auth path.
+    #[test]
+    fn verify_key_malformed_hash_is_false_not_error() {
+        let service = ApiKeyService::new("s".to_string()).unwrap();
+        assert!(!service.verify_key("anykey", "not-hex-zzzz").unwrap());
     }
 }
