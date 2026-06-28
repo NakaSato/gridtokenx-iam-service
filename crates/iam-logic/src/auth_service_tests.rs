@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use uuid::Uuid;
-use iam_core::domain::identity::{User, UserWithHash, Role, EmailVerificationState};
+use iam_core::domain::identity::{User, UserWithHash, Role, EmailVerificationState, ApiKey};
+use iam_core::error::ApiError;
 use iam_core::traits::{
     MockUserRepositoryTrait, MockWalletRepositoryTrait, MockApiKeyRepositoryTrait,
     MockCacheTrait, MockEventBusTrait, MockBlockchainTrait
@@ -220,6 +221,151 @@ fn build_auth_service(
         Arc::new(MockBlockchainTrait::new()),
         mock_wallet_service(),
     )
+}
+
+/// Builds an `AuthService` whose API-key repo is caller-supplied (the standard
+/// `build_auth_service` stubs an empty one). Used by the `verify_api_key` tests.
+fn build_auth_service_with_keys(
+    api_key_repo: MockApiKeyRepositoryTrait,
+    cache: MockCacheTrait,
+    event_bus: MockEventBusTrait,
+) -> AuthService {
+    let config = mock_config();
+    let jwt_service = JwtService::new(&config.jwt_secret).unwrap();
+    let api_key_service = ApiKeyService::new(config.api_key_secret.clone()).unwrap();
+    AuthService::new(
+        Arc::new(MockUserRepositoryTrait::new()),
+        Arc::new(MockWalletRepositoryTrait::new()),
+        Arc::new(api_key_repo),
+        config,
+        jwt_service,
+        api_key_service,
+        Arc::new(cache),
+        Arc::new(event_bus),
+        Arc::new(MockBlockchainTrait::new()),
+        mock_wallet_service(),
+    )
+}
+
+/// Test fixture: an active API key whose `key_hash` matches `raw` under the test
+/// secret, so the cache key derived inside `verify_api_key` lines up.
+fn fixture_api_key(raw: &str) -> ApiKey {
+    let api_key_service = ApiKeyService::new(mock_config().api_key_secret.clone()).unwrap();
+    ApiKey {
+        id: Uuid::new_v4(),
+        key_hash: api_key_service.hash_key(raw).unwrap(),
+        name: "meter-1".to_string(),
+        role: "aggregator-bridge".to_string(),
+        permissions: vec![],
+        is_active: true,
+        created_at: chrono::Utc::now(),
+        last_used_at: None,
+    }
+}
+
+/// Cache hit ⇒ hot path. The key was verified within the TTL window, so the
+/// per-request `update_last_used` DB write, the `cache_set`, and the event
+/// publish are all skipped — only the cache GET runs. Guards the #2/#3 fix
+/// (write/event amplification) against regression.
+#[tokio::test]
+async fn verify_api_key_cache_hit_skips_db_and_event() {
+    let mut api_key_repo = MockApiKeyRepositoryTrait::new();
+    let mut cache = MockCacheTrait::new();
+    let mut event_bus = MockEventBusTrait::new();
+
+    let raw_key = "gridtokenx-cache-hit-key";
+    let api_key = fixture_api_key(raw_key);
+    let cached_value = serde_json::to_value(&api_key).unwrap();
+
+    cache.expect_get_value()
+        .returning(move |_| {
+            let v = cached_value.clone();
+            Box::pin(async move { Ok(Some(v)) })
+        });
+    // Hot path must NOT touch DB, re-cache, or emit events.
+    api_key_repo.expect_update_last_used().times(0);
+    cache.expect_set_value().times(0);
+    event_bus.expect_publish().times(0);
+
+    let auth_service = build_auth_service_with_keys(api_key_repo, cache, event_bus);
+    let result = auth_service.verify_api_key(raw_key).await.expect("verify failed");
+    assert_eq!(result.role, "aggregator-bridge");
+}
+
+/// Cache miss + DB hit ⇒ cold path. Resolve from Postgres, then refresh
+/// `last_used_at`, populate the cache, and publish exactly one event.
+#[tokio::test]
+async fn verify_api_key_cache_miss_db_hit_caches_and_publishes() {
+    let mut api_key_repo = MockApiKeyRepositoryTrait::new();
+    let mut cache = MockCacheTrait::new();
+    let mut event_bus = MockEventBusTrait::new();
+
+    let raw_key = "gridtokenx-cold-key";
+    let api_key = fixture_api_key(raw_key);
+
+    cache.expect_get_value()
+        .returning(|_| Box::pin(async move { Ok(None) }));
+    api_key_repo.expect_find_by_hash()
+        .returning(move |_| {
+            let k = api_key.clone();
+            Box::pin(async move { Ok(Some(k)) })
+        });
+    api_key_repo.expect_update_last_used()
+        .times(1)
+        .returning(|_| Box::pin(async move { Ok(()) }));
+    cache.expect_set_value()
+        .times(1)
+        .returning(|_, _, _| Box::pin(async move { Ok(()) }));
+    event_bus.expect_publish()
+        .times(1)
+        .returning(|_| Box::pin(async move { Ok(()) }));
+
+    let auth_service = build_auth_service_with_keys(api_key_repo, cache, event_bus);
+    let result = auth_service.verify_api_key(raw_key).await.expect("verify failed");
+    assert_eq!(result.role, "aggregator-bridge");
+}
+
+/// Cache miss + no DB row (missing/inactive) ⇒ genuine auth failure. Surfaces as
+/// `ApiError::Unauthorized` (which the gRPC handler maps to `valid:false`), and
+/// nothing is cached or published.
+#[tokio::test]
+async fn verify_api_key_unknown_key_is_unauthorized() {
+    let mut api_key_repo = MockApiKeyRepositoryTrait::new();
+    let mut cache = MockCacheTrait::new();
+    let mut event_bus = MockEventBusTrait::new();
+
+    cache.expect_get_value()
+        .returning(|_| Box::pin(async move { Ok(None) }));
+    api_key_repo.expect_find_by_hash()
+        .returning(|_| Box::pin(async move { Ok(None) }));
+    cache.expect_set_value().times(0);
+    event_bus.expect_publish().times(0);
+
+    let auth_service = build_auth_service_with_keys(api_key_repo, cache, event_bus);
+    let err = auth_service.verify_api_key("nope").await.unwrap_err();
+    assert!(matches!(err, ApiError::Unauthorized(_)), "expected Unauthorized, got {err:?}");
+}
+
+/// Cache miss + DB infra error ⇒ must propagate as a NON-Unauthorized error so
+/// the gRPC handler maps it to a retryable `Unavailable` rather than masking an
+/// outage as an invalid key. Guards the #4 fix.
+#[tokio::test]
+async fn verify_api_key_db_error_is_not_unauthorized() {
+    let mut api_key_repo = MockApiKeyRepositoryTrait::new();
+    let mut cache = MockCacheTrait::new();
+    let mut event_bus = MockEventBusTrait::new();
+
+    cache.expect_get_value()
+        .returning(|_| Box::pin(async move { Ok(None) }));
+    api_key_repo.expect_find_by_hash()
+        .returning(|_| Box::pin(async move { Err(ApiError::Internal("db down".to_string())) }));
+    cache.expect_set_value().times(0);
+    event_bus.expect_publish().times(0);
+
+    let auth_service = build_auth_service_with_keys(api_key_repo, cache, event_bus);
+    let err = auth_service.verify_api_key("any").await.unwrap_err();
+    assert!(!matches!(err, ApiError::Unauthorized(_)), "infra error must not look like a bad key");
+    assert!(matches!(err, ApiError::Internal(_)), "expected Internal, got {err:?}");
 }
 
 /// First resend for an unverified account: publishes the email event AND arms the

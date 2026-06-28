@@ -635,6 +635,11 @@ impl AuthService {
 
         let key_hash = self.api_key_service.hash_key(key)?;
 
+        // Cache TTL bounds the revocation window: a key deactivated in the
+        // DB stays accepted until its cached entry expires. There is no
+        // app-level revoke hook to invalidate the cache, so keep this short.
+        const API_KEY_CACHE_TTL_SECS: u64 = 30;
+
         // ── Check cache first ────────────────────────────────────────
         let cache_key = iam_core::domain::identity::keys::cache::api_key(&key_hash);
         let cached: Option<ApiKey> = self.cache_get(&cache_key).await
@@ -644,31 +649,28 @@ impl AuthService {
             });
 
         if let Some(api_key) = cached {
-            // Update last_used_at in DB (fire-and-forget)
-            let _ = self.api_key_repo.update_last_used(api_key.id).await;
-
-            // Publish event
-            let event = Event::api_key_verified(
-                &api_key.name,
-                &api_key.role,
-            );
-            let _ = self.event_bus.publish(&event).await;
-
+            // Cache hit ⇒ this key was verified within the TTL window. Skip
+            // the per-request `update_last_used` DB write and the event
+            // publish to avoid write/event amplification on the hot gateway
+            // path. `last_used_at` is therefore tracked at ~TTL granularity,
+            // refreshed on the cache-miss path below.
             return Ok(api_key);
         }
 
-        // Cache miss — query DB
+        // Cache miss — query DB. A missing/inactive row is a genuine auth
+        // failure (Unauthorized); infra errors propagate as Database/Internal
+        // so callers can distinguish "bad key" from "IAM degraded".
         let api_key = self.api_key_repo.find_by_hash(&key_hash).await?
             .ok_or_else(|| {
                 info!("API Key not found or inactive");
                 ApiError::Unauthorized("Invalid API Key".to_string())
             })?;
 
-        // Update last_used_at
+        // Update last_used_at (fire-and-forget; once per TTL window)
         let _ = self.api_key_repo.update_last_used(api_key.id).await;
 
-        // ── Cache the API key for 5 minutes ──────────────────────────
-        let _ = self.cache_set(&cache_key, &api_key, Some(300)).await;
+        // ── Cache the API key ────────────────────────────────────────
+        let _ = self.cache_set(&cache_key, &api_key, Some(API_KEY_CACHE_TTL_SECS)).await;
 
         // ── Publish event ────────────────────────────────────────────
         let event = Event::api_key_verified(

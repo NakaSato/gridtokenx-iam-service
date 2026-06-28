@@ -5,6 +5,7 @@ use gridtokenx_blockchain_core::auth::ServiceRole;
 
 use iam_logic::JwtService;
 use iam_logic::AuthService;
+use iam_core::error::ApiError;
 
 // Generated code from proto
 // Integration with generated proto code
@@ -154,14 +155,23 @@ impl identity::IdentityService for IdentityGrpcService {
                 error_message: String::default(),
                 ..Default::default()
             }, ctx)),
-            Err(e) => {
-                warn!("❌ gRPC: API Key verification failed: {}", e);
+            // Genuine auth failure (key missing/inactive): not a transport
+            // error — report valid:false so the caller treats it as a denied
+            // key, not a degraded IAM.
+            Err(ApiError::Unauthorized(msg)) => {
+                warn!("❌ gRPC: API Key invalid: {}", msg);
                 Ok((ApiKeyResponse {
                     valid: false,
                     role: String::default(),
-                    error_message: format!("{}", e),
+                    error_message: msg,
                     ..Default::default()
                 }, ctx))
+            }
+            // Infra failure (DB/Redis/hashing): surface as a retryable
+            // transport error instead of masquerading as an invalid key.
+            Err(e) => {
+                warn!("❌ gRPC: API Key verification error (infra): {}", e);
+                Err(ConnectError::new(ErrorCode::Unavailable, format!("{}", e)))
             }
         }
     }
