@@ -76,6 +76,12 @@ Both servers are wired in `bin/iam-service/src/startup.rs` and run concurrently 
 `IdentityService` (`proto/identity.proto`) — how Trading and gateways verify identities:
 `VerifyToken`, `Authorize`, `GetUserInfo`, `VerifyApiKey`, `RegisterUser`, `LinkWallet`, `InitializeUserWallet`.
 
+**`VerifyApiKey` semantics (caller contract).** The handler distinguishes auth failure from infra failure (`crates/iam-api/src/identity_grpc.rs:150`):
+- **Genuine bad key** (missing/inactive → `ApiError::Unauthorized`) → `ApiKeyResponse { valid: false }`, *not* a transport error.
+- **Infra failure** (Postgres/Redis/hash error) → gRPC `unavailable` `ConnectError` (retryable). Callers (APISIX, Aggregator Bridge) should retry / circuit-break on `unavailable` rather than treating it as a denied key.
+
+API keys are cached for **30s** (`crates/iam-logic/src/auth_service.rs:638`) — this bounds the revocation window, since there is no app-level revoke hook and deactivation is a direct DB flip (`is_active`). On a cache hit the hot path returns immediately: no `update_last_used` DB write, no `api_key_verified` event. So `last_used_at` is accurate to ~TTL granularity and `ApiKeyVerified` fires at most once per 30s per key (refreshed on cache miss).
+
 ## 📡 Observability
 
 Telemetry (tracing / OTel) initializes via the shared **`gridtokenx-telemetry`** workspace crate, re-exported by the local `telemetry` module. `main.rs` calls `telemetry::init_telemetry("gridtokenx-iam")` before `startup::run`. Do not hand-roll a `tracing-subscriber` here — extend the shared crate.
@@ -140,9 +146,10 @@ The public auth surface is throttled and fail-closed at several layers:
   is no enumeration/timing oracle. The cooldown is armed best-effort (fail-open).
 - **Kafka dual-write skip** — audit-only, consumer-less events
   (`KAFKA_SKIP_EVENT_TYPES`, `crates/iam-persistence/src/event_bus.rs:33`) stay on
-  the Redis audit stream only. `ApiKeyVerified` fires on every gateway API-key
-  check (hundreds of thousands/day); outboxing it floods `iam_outbox_events` and
-  head-of-line-blocks real notification events.
+  the Redis audit stream only. `ApiKeyVerified` fires on each *uncached* gateway
+  API-key check (now at most once per 30s TTL per key — cache hits skip the
+  event; see the `VerifyApiKey` semantics above); outboxing it would still flood
+  `iam_outbox_events` and head-of-line-block real notification events.
 
 Behaviors are pinned by the live E2E suite in `tests/*_e2e.sh` (lockout asserts
 423, plus resend cooldown, kafka dual-write skip, rate limiting, health-ready
