@@ -134,6 +134,10 @@ pub trait CacheTrait: Send + Sync {
     async fn delete(&self, key: &str) -> Result<()>;
     /// Atomically increments a numeric value in the cache.
     async fn increment(&self, key: &str) -> Result<u64>;
+    /// Atomically increments a numeric value and (re)sets its TTL, returning the
+    /// new value. Use for sliding-window counters (e.g. login attempts) so the
+    /// count decays instead of accumulating forever.
+    async fn increment_with_ttl(&self, key: &str, ttl_secs: u64) -> Result<u64>;
     /// Checks if a key exists in the cache.
     async fn exists(&self, key: &str) -> Result<bool>;
 }

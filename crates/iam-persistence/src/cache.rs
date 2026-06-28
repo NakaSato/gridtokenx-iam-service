@@ -202,6 +202,15 @@ impl CacheTrait for CacheService {
         self.increment_raw(key).await.map_err(|e| ApiError::Internal(e.to_string()))
     }
 
+    async fn increment_with_ttl(&self, key: &str, ttl_secs: u64) -> IamResult<u64> {
+        // Type-qualified call resolves to the inherent method, not this trait
+        // method, so there is no recursion.
+        CacheService::increment_with_ttl(self, key, ttl_secs)
+            .await
+            .map(|v| v.max(0) as u64)
+            .map_err(|e| ApiError::Internal(e.to_string()))
+    }
+
     async fn exists(&self, key: &str) -> IamResult<bool> {
         self.exists_raw(key).await.map_err(|e| ApiError::Internal(e.to_string()))
     }

@@ -599,3 +599,107 @@ async fn verify_email_provisions_custodial_wallet_preserves_location() {
         .expect("background on-chain registration did not complete in time")
         .expect("on-chain bookkeeping channel closed before signaling");
 }
+
+/// Builds a minimal active `User` for auth-flow tests.
+fn fixture_user(username: &str, email: &str) -> User {
+    User {
+        id: Uuid::new_v4(),
+        username: username.to_string(),
+        email: email.to_string(),
+        role: Role::User.to_string(),
+        first_name: None,
+        last_name: None,
+        wallet_address: None,
+        is_active: true,
+        blockchain_registered: false,
+        user_type: None,
+        latitude: None,
+        longitude: None,
+    }
+}
+
+/// Login lockout: a wrong password must bump the failed-attempt counter via the
+/// sliding-window `increment_with_ttl` (NOT the un-expiring `increment`), and on
+/// hitting the threshold the counter is cleared so the account starts clean once
+/// the lock expires. Guards the permanent-re-lock regression.
+#[tokio::test]
+async fn login_lockout_uses_ttl_counter_and_clears_on_lock() {
+    let mut user_repo = MockUserRepositoryTrait::new();
+    let mut cache = MockCacheTrait::new();
+    let mut event_bus = MockEventBusTrait::new();
+
+    let username = "lockme";
+    let real_password = "GridTokenX-$2024-@Correct";
+    let password_hash = crate::password::PasswordService::hash_password(real_password).unwrap();
+    let uwh = UserWithHash { user: fixture_user(username, "lock@example.com"), password_hash };
+
+    // Not currently locked.
+    cache.expect_exists().returning(|_| Box::pin(async move { Ok(false) }));
+    // Profile cache miss → DB lookup.
+    cache.expect_get_value().returning(|_| Box::pin(async move { Ok(None) }));
+    user_repo.expect_find_by_username_or_email()
+        .returning(move |_| {
+            let uwh = uwh.clone();
+            Box::pin(async move { Ok(Some(uwh)) })
+        });
+    // Profile cache set + lock set — accept any.
+    cache.expect_set_value().returning(|_, _, _| Box::pin(async move { Ok(()) }));
+    // THE assertion: sliding-window counter with the 900s lockout TTL.
+    cache.expect_increment_with_ttl()
+        .withf(|_key, ttl| *ttl == 900)
+        .times(1)
+        .returning(|_, _| Box::pin(async move { Ok(5) }));
+    // The un-expiring increment must no longer be used on this path.
+    cache.expect_increment().times(0);
+    // Counter cleared on lock (clean slate after the lock expires).
+    cache.expect_delete().times(1).returning(|_| Box::pin(async move { Ok(()) }));
+    event_bus.expect_publish().returning(|_| Box::pin(async move { Ok(()) }));
+
+    let auth = build_auth_service(user_repo, cache, event_bus);
+    let err = auth.login(username.to_string(), "totally-wrong".to_string()).await.unwrap_err();
+    assert!(
+        matches!(err, ApiError::WithCode(iam_core::error::ErrorCode::AccountLocked, _)),
+        "expected AccountLocked, got {err:?}"
+    );
+}
+
+/// forgot_password resolves the account with a SINGLE DB lookup (the row is
+/// reused for both the existence check and the event payload) and publishes one
+/// reset event. Guards the double-query dedup.
+#[tokio::test]
+async fn forgot_password_single_db_lookup_and_publishes() {
+    let mut user_repo = MockUserRepositoryTrait::new();
+    let mut cache = MockCacheTrait::new();
+    let mut event_bus = MockEventBusTrait::new();
+
+    let uwh = UserWithHash { user: fixture_user("resetme", "reset@example.com"), password_hash: "x".to_string() };
+    user_repo.expect_find_by_username_or_email()
+        .times(1)
+        .returning(move |_| {
+            let uwh = uwh.clone();
+            Box::pin(async move { Ok(Some(uwh)) })
+        });
+    cache.expect_set_value().times(1).returning(|_, _, _| Box::pin(async move { Ok(()) }));
+    event_bus.expect_publish().times(1).returning(|_| Box::pin(async move { Ok(()) }));
+
+    let auth = build_auth_service(user_repo, cache, event_bus);
+    auth.forgot_password("reset@example.com").await.expect("forgot_password failed");
+}
+
+/// forgot_password for an unknown email is a silent no-op (anti-enumeration):
+/// returns Ok, caches nothing, publishes nothing.
+#[tokio::test]
+async fn forgot_password_unknown_email_is_noop() {
+    let mut user_repo = MockUserRepositoryTrait::new();
+    let mut cache = MockCacheTrait::new();
+    let mut event_bus = MockEventBusTrait::new();
+
+    user_repo.expect_find_by_username_or_email()
+        .times(1)
+        .returning(|_| Box::pin(async move { Ok(None) }));
+    cache.expect_set_value().times(0);
+    event_bus.expect_publish().times(0);
+
+    let auth = build_auth_service(user_repo, cache, event_bus);
+    auth.forgot_password("ghost@example.com").await.expect("should be a silent Ok");
+}

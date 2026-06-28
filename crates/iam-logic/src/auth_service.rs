@@ -19,6 +19,14 @@ use iam_core::domain::identity::Event;
 /// Throttles email-bombing without blocking a legitimate retry for long.
 const RESEND_VERIFICATION_COOLDOWN_SECS: u64 = 60;
 
+/// Failed-login attempts before the account is temporarily locked.
+const LOGIN_MAX_FAILED_ATTEMPTS: u64 = 5;
+/// Sliding window over which failed-login attempts are counted, and the lockout
+/// duration once the threshold is hit. The attempts counter carries this TTL so
+/// old failures decay instead of accumulating forever (which previously caused
+/// permanent re-lock after a single mistype once the count had ever reached 5).
+const LOGIN_LOCKOUT_SECS: u64 = 900; // 15 minutes
+
 #[derive(Clone)]
 pub struct AuthService {
     pub user_repo: Arc<dyn UserRepositoryTrait>,
@@ -150,24 +158,33 @@ impl AuthService {
         if !is_valid {
             info!("Invalid password for user: {}", user_with_hash.user.username);
 
-            // ── Track failed attempts in Cache ───────────────────────
+            // ── Track failed attempts in Cache (sliding window) ──────
+            // TTL on the counter so stale failures decay; otherwise the count
+            // accumulates forever and a single mistype re-locks indefinitely.
             let attempts_key = iam_core::domain::identity::keys::cache::login_attempts(&username);
-            let attempts = self.cache.increment(&attempts_key).await.unwrap_or(0u64);
+            let attempts = self.cache
+                .increment_with_ttl(&attempts_key, LOGIN_LOCKOUT_SECS)
+                .await
+                .unwrap_or(0u64);
 
             // Publish attempt event
             let _ = self.event_bus.publish(&Event::login_attempt(&username, false, None)).await;
 
-            // Lock account after 5 failed attempts
-            if attempts >= 5 {
-                let lockout_secs = 900; // 15 minutes
-                let _ = self.cache_set(&lock_key, &true, Some(lockout_secs)).await;
-                
+            // Lock account after too many failed attempts
+            if attempts >= LOGIN_MAX_FAILED_ATTEMPTS {
+                let _ = self.cache_set(&lock_key, &true, Some(LOGIN_LOCKOUT_SECS)).await;
+
+                // Clear the counter so that when the lock expires the account
+                // starts from a clean slate instead of re-locking on the next
+                // single failure.
+                let _ = self.cache.delete(&attempts_key).await;
+
                 // Publish locked event
-                let _ = self.event_bus.publish(&Event::account_locked(&username, lockout_secs)).await;
-                
+                let _ = self.event_bus.publish(&Event::account_locked(&username, LOGIN_LOCKOUT_SECS)).await;
+
                 return Err(ApiError::with_code(
                     iam_core::error::ErrorCode::AccountLocked,
-                    format!("Account locked for {} seconds due to too many failed attempts", lockout_secs),
+                    format!("Account locked for {} seconds due to too many failed attempts", LOGIN_LOCKOUT_SECS),
                 ));
             }
 
@@ -976,12 +993,11 @@ impl AuthService {
 
     /// Initiates the password reset process by sending an email with a reset token.
     pub async fn forgot_password(&self, email: &str) -> Result<()> {
-        // Always return Ok to avoid email enumeration
-        let exists = self.user_repo.find_by_username_or_email(email).await?.is_some();
-
-        if !exists {
+        // Always return Ok to avoid email enumeration. Single DB lookup — reuse
+        // the row for both the existence check and the event payload.
+        let Some(user_with_hash) = self.user_repo.find_by_username_or_email(email).await? else {
             return Ok(());
-        }
+        };
 
         let token = Uuid::new_v4().to_string();
         let ttl_secs = 900u64; // 15 minutes
@@ -990,15 +1006,12 @@ impl AuthService {
 
         // ── Publish Event ──────────────────────────────────────────
         let reset_url = format!("{}/reset-password?token={}", self.config.app_base_url, token);
-        
-        if let Some(user_with_hash) = self.user_repo.find_by_username_or_email(email).await? {
-            let event = Event::password_reset_requested(
-                &user_with_hash.user.id,
-                email,
-                &reset_url,
-            );
-            let _ = self.event_bus.publish(&event).await;
-        }
+        let event = Event::password_reset_requested(
+            &user_with_hash.user.id,
+            email,
+            &reset_url,
+        );
+        let _ = self.event_bus.publish(&event).await;
 
         Ok(())
     }
