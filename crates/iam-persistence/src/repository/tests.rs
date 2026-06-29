@@ -14,8 +14,20 @@ mod tests {
         let password_hash = "hashed_password";
         let role = "user";
 
-        // 1. Create User
+        // 1. Create User — registration inserts an INACTIVE row (is_active = false);
+        // the account is dormant until email verification activates it.
         repo.create(id, &username, &email, password_hash, role, Some("First"), Some("Last"), None).await?;
+
+        // 1b. The finders filter `is_active = true`, so a freshly created (unverified)
+        // user is intentionally not yet resolvable. Guards that create-inactive →
+        // verify-activate contract.
+        assert!(
+            repo.find_by_username_or_email(&username).await?.is_none(),
+            "unverified user must not be findable until activated"
+        );
+
+        // 1c. Activate via email verification (flips is_active = true).
+        repo.verify_email(&email).await?.expect("verify_email should return the activated user");
 
         // 2. Find by username
         let user = repo.find_by_username_or_email(&username).await?.expect("User not found by username");
