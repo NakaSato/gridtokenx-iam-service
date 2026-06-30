@@ -14,6 +14,55 @@ pub use iam_protocol::identity;
 use identity::{TokenRequestView, AuthorizeRequestView, ApiKeyRequestView};
 use identity::{ApiKeyResponse, AuthorizeResponse, ClaimsResponse, UserInfoResponse, GetUserWalletResponse};
 
+// ---------------------------------------------------------------------------
+// Per-method RBAC allowlists.
+//
+// Each RPC gates on the caller's `x-gridtokenx-role` header against exactly one
+// of these arrays. They are hoisted into named consts (rather than inlined at
+// the call site) so the `rbac_allowlist` tests can assert the wired policy
+// against the documented spec — drift in either direction fails the build.
+// `Admin` is intentionally present in every list (it passes everywhere).
+// ---------------------------------------------------------------------------
+
+/// `VerifyToken` — the broad read path used by every identity-checking caller.
+pub(crate) const VERIFY_TOKEN_ROLES: &[ServiceRole] = &[
+    ServiceRole::ApiGateway,
+    ServiceRole::TradingApi,
+    ServiceRole::AggregatorBridge,
+    ServiceRole::MeterService,
+    ServiceRole::Admin,
+];
+
+/// `Authorize` — gateway-only permission decision.
+pub(crate) const AUTHORIZE_ROLES: &[ServiceRole] = &[ServiceRole::ApiGateway, ServiceRole::Admin];
+
+/// `GetUserInfo` — gateway-only profile read.
+pub(crate) const GET_USER_INFO_ROLES: &[ServiceRole] = &[ServiceRole::ApiGateway, ServiceRole::Admin];
+
+/// `VerifyApiKey` — gateway plus the Aggregator Bridge (device/API-key callers).
+pub(crate) const VERIFY_API_KEY_ROLES: &[ServiceRole] = &[
+    ServiceRole::ApiGateway,
+    ServiceRole::AggregatorBridge,
+    ServiceRole::Admin,
+];
+
+/// `RegisterUser` — gateway-only write.
+pub(crate) const REGISTER_USER_ROLES: &[ServiceRole] = &[ServiceRole::ApiGateway, ServiceRole::Admin];
+
+/// `LinkWallet` — gateway-only write.
+pub(crate) const LINK_WALLET_ROLES: &[ServiceRole] = &[ServiceRole::ApiGateway, ServiceRole::Admin];
+
+/// `GetUserWallet` — gateway plus the Aggregator Bridge (settlement needs the address).
+pub(crate) const GET_USER_WALLET_ROLES: &[ServiceRole] = &[
+    ServiceRole::AggregatorBridge,
+    ServiceRole::ApiGateway,
+    ServiceRole::Admin,
+];
+
+/// `InitializeUserWallet` — gateway-only write.
+pub(crate) const INITIALIZE_USER_WALLET_ROLES: &[ServiceRole] =
+    &[ServiceRole::ApiGateway, ServiceRole::Admin];
+
 /// gRPC service implementation for the Identity service, using ConnectRPC.
 pub struct IdentityGrpcService {
     auth_service: AuthService,
@@ -32,6 +81,15 @@ impl IdentityGrpcService {
     fn extract_role(&self, ctx: &Context) -> ServiceRole {
         ServiceRole::from_headers(&ctx.headers)
     }
+
+    /// Gate a request against a method's allowlist. Fails closed with
+    /// `PermissionDenied` for any role not in `allowed` (including missing or
+    /// unknown roles, which `from_headers` maps to a non-privileged value).
+    fn gate(&self, ctx: &Context, allowed: &[ServiceRole]) -> Result<(), ConnectError> {
+        self.extract_role(ctx)
+            .require_any(allowed)
+            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))
+    }
 }
 
 
@@ -41,9 +99,7 @@ impl identity::IdentityService for IdentityGrpcService {
         ctx: Context,
         request: OwnedView<TokenRequestView<'static>>,
     ) -> std::result::Result<(ClaimsResponse, Context), ConnectError> {
-        let role = self.extract_role(&ctx);
-        role.require_any(&[ServiceRole::ApiGateway, ServiceRole::TradingApi, ServiceRole::AggregatorBridge, ServiceRole::MeterService, ServiceRole::Admin])
-            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
+        self.gate(&ctx, VERIFY_TOKEN_ROLES)?;
 
         info!("🔐 gRPC: VerifyToken request");
         let token = request.token; // Zero-copy &str
@@ -76,9 +132,7 @@ impl identity::IdentityService for IdentityGrpcService {
         ctx: Context,
         request: OwnedView<AuthorizeRequestView<'static>>,
     ) -> std::result::Result<(AuthorizeResponse, Context), ConnectError> {
-        let role = self.extract_role(&ctx);
-        role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
+        self.gate(&ctx, AUTHORIZE_ROLES)?;
 
         info!(
             "🔐 gRPC: Authorize request for permission: {}",
@@ -116,9 +170,7 @@ impl identity::IdentityService for IdentityGrpcService {
         ctx: Context,
         request: OwnedView<TokenRequestView<'static>>,
     ) -> std::result::Result<(UserInfoResponse, Context), ConnectError> {
-        let role = self.extract_role(&ctx);
-        role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
+        self.gate(&ctx, GET_USER_INFO_ROLES)?;
 
         info!("🔐 gRPC: GetUserInfo request");
 
@@ -142,9 +194,7 @@ impl identity::IdentityService for IdentityGrpcService {
         ctx: Context,
         request: OwnedView<ApiKeyRequestView<'static>>,
     ) -> std::result::Result<(ApiKeyResponse, Context), ConnectError> {
-        let role = self.extract_role(&ctx);
-        role.require_any(&[ServiceRole::ApiGateway, ServiceRole::AggregatorBridge, ServiceRole::Admin])
-            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
+        self.gate(&ctx, VERIFY_API_KEY_ROLES)?;
 
         info!("🔐 gRPC: VerifyApiKey request");
 
@@ -181,9 +231,7 @@ impl identity::IdentityService for IdentityGrpcService {
         ctx: Context,
         request: OwnedView<identity::RegisterUserRequestView<'static>>,
     ) -> std::result::Result<(identity::RegisterUserResponse, Context), ConnectError> {
-        let role = self.extract_role(&ctx);
-        role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
+        self.gate(&ctx, REGISTER_USER_ROLES)?;
 
         info!("📝 gRPC: RegisterUser request for {}", request.username);
         
@@ -210,9 +258,7 @@ impl identity::IdentityService for IdentityGrpcService {
         ctx: Context,
         request: OwnedView<identity::LinkWalletRequestView<'static>>,
     ) -> std::result::Result<(identity::LinkWalletResponse, Context), ConnectError> {
-        let role = self.extract_role(&ctx);
-        role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
+        self.gate(&ctx, LINK_WALLET_ROLES)?;
 
         info!("🔗 gRPC: LinkWallet request for user {}", request.user_id);
         
@@ -241,9 +287,7 @@ impl identity::IdentityService for IdentityGrpcService {
         ctx: Context,
         request: OwnedView<identity::GetUserWalletRequestView<'static>>,
     ) -> std::result::Result<(GetUserWalletResponse, Context), ConnectError> {
-        let role = self.extract_role(&ctx);
-        role.require_any(&[ServiceRole::AggregatorBridge, ServiceRole::ApiGateway, ServiceRole::Admin])
-            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
+        self.gate(&ctx, GET_USER_WALLET_ROLES)?;
 
         info!("🔑 gRPC: GetUserWallet request for user {}", request.user_id);
 
@@ -264,9 +308,7 @@ impl identity::IdentityService for IdentityGrpcService {
         ctx: Context,
         request: OwnedView<identity::InitializeWalletRequestView<'static>>,
     ) -> std::result::Result<(identity::InitializeWalletResponse, Context), ConnectError> {
-        let role = self.extract_role(&ctx);
-        role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-            .map_err(|(_, msg)| ConnectError::new(ErrorCode::PermissionDenied, msg))?;
+        self.gate(&ctx, INITIALIZE_USER_WALLET_ROLES)?;
 
         info!("🌐 gRPC: InitializeUserWallet request for user {}", request.user_id);
 

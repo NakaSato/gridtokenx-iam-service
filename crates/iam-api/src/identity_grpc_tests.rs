@@ -421,3 +421,360 @@ async fn get_user_wallet_invalid_uuid_rejected() {
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidArgument);
 }
+
+// ---------------------------------------------------------------------------
+// RBAC allowlist drift guard.
+//
+// These assert the *wired* per-method allowlists (the `*_ROLES` consts the
+// handlers gate on) against the documented spec. A change to any handler's
+// allowlist — widening or narrowing — fails here until the spec is updated
+// deliberately. This is the static counterpart to the runtime matrix below.
+// ---------------------------------------------------------------------------
+
+use crate::identity_grpc::{
+    AUTHORIZE_ROLES, GET_USER_INFO_ROLES, GET_USER_WALLET_ROLES, INITIALIZE_USER_WALLET_ROLES,
+    LINK_WALLET_ROLES, REGISTER_USER_ROLES, VERIFY_API_KEY_ROLES, VERIFY_TOKEN_ROLES,
+};
+use gridtokenx_blockchain_core::auth::ServiceRole;
+
+/// Compare an allowlist against the spec regardless of declaration order.
+fn assert_roles(actual: &[ServiceRole], expected: &[ServiceRole]) {
+    let mut a = actual.to_vec();
+    let mut e = expected.to_vec();
+    a.sort_by_key(|r| format!("{r}"));
+    e.sort_by_key(|r| format!("{r}"));
+    assert_eq!(a, e, "allowlist drift: {actual:?} != spec {expected:?}");
+}
+
+#[test]
+fn allowlist_verify_token_matches_spec() {
+    assert_roles(
+        VERIFY_TOKEN_ROLES,
+        &[
+            ServiceRole::ApiGateway,
+            ServiceRole::TradingApi,
+            ServiceRole::AggregatorBridge,
+            ServiceRole::MeterService,
+            ServiceRole::Admin,
+        ],
+    );
+}
+
+#[test]
+fn allowlist_verify_api_key_matches_spec() {
+    assert_roles(
+        VERIFY_API_KEY_ROLES,
+        &[
+            ServiceRole::ApiGateway,
+            ServiceRole::AggregatorBridge,
+            ServiceRole::Admin,
+        ],
+    );
+}
+
+#[test]
+fn allowlist_get_user_wallet_matches_spec() {
+    assert_roles(
+        GET_USER_WALLET_ROLES,
+        &[
+            ServiceRole::AggregatorBridge,
+            ServiceRole::ApiGateway,
+            ServiceRole::Admin,
+        ],
+    );
+}
+
+#[test]
+fn allowlist_gateway_only_methods_match_spec() {
+    // Authorize, GetUserInfo, RegisterUser, LinkWallet, InitializeUserWallet
+    // are all gateway-only writes/reads: exactly {ApiGateway, Admin}.
+    let gateway_only = &[ServiceRole::ApiGateway, ServiceRole::Admin];
+    for list in [
+        AUTHORIZE_ROLES,
+        GET_USER_INFO_ROLES,
+        REGISTER_USER_ROLES,
+        LINK_WALLET_ROLES,
+        INITIALIZE_USER_WALLET_ROLES,
+    ] {
+        assert_roles(list, gateway_only);
+    }
+}
+
+#[test]
+fn allowlist_invariants_hold() {
+    let all = [
+        VERIFY_TOKEN_ROLES,
+        AUTHORIZE_ROLES,
+        GET_USER_INFO_ROLES,
+        VERIFY_API_KEY_ROLES,
+        REGISTER_USER_ROLES,
+        LINK_WALLET_ROLES,
+        GET_USER_WALLET_ROLES,
+        INITIALIZE_USER_WALLET_ROLES,
+    ];
+    for list in all {
+        // Admin and ApiGateway are present everywhere.
+        assert!(list.contains(&ServiceRole::Admin), "Admin missing from {list:?}");
+        assert!(
+            list.contains(&ServiceRole::ApiGateway),
+            "ApiGateway missing from {list:?}"
+        );
+        // No allowlist ever admits these — they have no IAM-read business.
+        assert!(
+            !list.contains(&ServiceRole::Unknown),
+            "Unknown must never be allowlisted: {list:?}"
+        );
+        assert!(
+            !list.contains(&ServiceRole::IamService),
+            "IamService must not call its own RPCs: {list:?}"
+        );
+        assert!(
+            !list.contains(&ServiceRole::SettlementService),
+            "SettlementService never allowlisted: {list:?}"
+        );
+    }
+
+    // TradingApi and MeterService are *only* trusted for the broad VerifyToken read.
+    for list in [
+        AUTHORIZE_ROLES,
+        GET_USER_INFO_ROLES,
+        VERIFY_API_KEY_ROLES,
+        REGISTER_USER_ROLES,
+        LINK_WALLET_ROLES,
+        GET_USER_WALLET_ROLES,
+        INITIALIZE_USER_WALLET_ROLES,
+    ] {
+        assert!(
+            !list.contains(&ServiceRole::TradingApi),
+            "TradingApi only allowed on VerifyToken: {list:?}"
+        );
+        assert!(
+            !list.contains(&ServiceRole::MeterService),
+            "MeterService only allowed on VerifyToken: {list:?}"
+        );
+    }
+    assert!(VERIFY_TOKEN_ROLES.contains(&ServiceRole::TradingApi));
+    assert!(VERIFY_TOKEN_ROLES.contains(&ServiceRole::MeterService));
+
+    // AggregatorBridge is trusted for VerifyToken, VerifyApiKey, GetUserWallet only.
+    for list in [
+        AUTHORIZE_ROLES,
+        GET_USER_INFO_ROLES,
+        REGISTER_USER_ROLES,
+        LINK_WALLET_ROLES,
+        INITIALIZE_USER_WALLET_ROLES,
+    ] {
+        assert!(
+            !list.contains(&ServiceRole::AggregatorBridge),
+            "AggregatorBridge must not write/authorize: {list:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RBAC matrix — runtime gate behaviour for specific roles.
+//
+// `from_headers` maps any non-ApiGateway role straight from the header (no
+// secret needed), so these use AggregatorBridge / TradingApi / MeterService /
+// SettlementService directly. ApiGateway's secret handshake is covered by
+// `auth.rs::test_gateway_secret_fail_closed`.
+// ---------------------------------------------------------------------------
+
+/// Build a `Context` carrying `role` (kebab-case, via `Display`), no secret.
+fn ctx_role(role: ServiceRole) -> Context {
+    let mut h = HeaderMap::new();
+    h.insert("x-gridtokenx-role", role.to_string().parse().unwrap());
+    Context::new(h)
+}
+
+/// `SettlementService` is in no allowlist — it must be denied by every RPC.
+#[tokio::test]
+async fn settlement_service_denied_on_every_rpc() {
+    let (svc, _) = make_service();
+    let c = || ctx_role(ServiceRole::SettlementService);
+    let uid = Uuid::new_v4().to_string();
+
+    assert_eq!(
+        svc.verify_token(c(), token_req("x")).await.unwrap_err().code,
+        ErrorCode::PermissionDenied
+    );
+    assert_eq!(
+        svc.authorize(c(), authorize_req("x", "read:foo")).await.unwrap_err().code,
+        ErrorCode::PermissionDenied
+    );
+    assert_eq!(
+        svc.get_user_info(c(), token_req("x")).await.unwrap_err().code,
+        ErrorCode::PermissionDenied
+    );
+    assert_eq!(
+        svc.verify_api_key(c(), api_key_req("x")).await.unwrap_err().code,
+        ErrorCode::PermissionDenied
+    );
+    assert_eq!(
+        svc.register_user(c(), register_req()).await.unwrap_err().code,
+        ErrorCode::PermissionDenied
+    );
+    assert_eq!(
+        svc.link_wallet(c(), link_wallet_req(&uid)).await.unwrap_err().code,
+        ErrorCode::PermissionDenied
+    );
+    assert_eq!(
+        svc.get_user_wallet(c(), get_user_wallet_req(&uid)).await.unwrap_err().code,
+        ErrorCode::PermissionDenied
+    );
+    assert_eq!(
+        svc.initialize_user_wallet(c(), init_wallet_req(&uid)).await.unwrap_err().code,
+        ErrorCode::PermissionDenied
+    );
+}
+
+/// `TradingApi` may call `VerifyToken` (gate passes → garbage token → Ok/invalid),
+/// but nothing else (`Authorize` here) — that must be `PermissionDenied`.
+#[tokio::test]
+async fn trading_api_allowed_only_on_verify_token() {
+    let (svc, _) = make_service();
+    // Allowed: gate passes, handler runs (invalid token → Ok, not a gate error).
+    let (resp, _) = svc
+        .verify_token(ctx_role(ServiceRole::TradingApi), token_req("garbage"))
+        .await
+        .unwrap();
+    assert!(!resp.valid);
+    // Denied elsewhere.
+    assert_eq!(
+        svc.authorize(ctx_role(ServiceRole::TradingApi), authorize_req("x", "read:foo"))
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::PermissionDenied
+    );
+}
+
+/// `MeterService` may call `VerifyToken` only.
+#[tokio::test]
+async fn meter_service_allowed_only_on_verify_token() {
+    let (svc, _) = make_service();
+    let (resp, _) = svc
+        .verify_token(ctx_role(ServiceRole::MeterService), token_req("garbage"))
+        .await
+        .unwrap();
+    assert!(!resp.valid);
+    assert_eq!(
+        svc.verify_api_key(ctx_role(ServiceRole::MeterService), api_key_req("x"))
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::PermissionDenied
+    );
+}
+
+/// `AggregatorBridge` is allowed on `GetUserWallet`: the gate passes, so the
+/// request reaches UUID validation and fails there with `InvalidArgument`
+/// (NOT `PermissionDenied`) — proving the role cleared RBAC.
+#[tokio::test]
+async fn aggregator_bridge_allowed_on_get_user_wallet() {
+    let (svc, _) = make_service();
+    let err = svc
+        .get_user_wallet(
+            ctx_role(ServiceRole::AggregatorBridge),
+            get_user_wallet_req("not-a-uuid"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    // And denied where it has no business.
+    assert_eq!(
+        svc.register_user(ctx_role(ServiceRole::AggregatorBridge), register_req())
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::PermissionDenied
+    );
+}
+
+// ---------------------------------------------------------------------------
+// DB integration — RBAC gate + real Postgres-backed VerifyApiKey, end to end.
+//
+// `#[sqlx::test]` provisions a throwaway database, runs the platform
+// migrations, and hands us a pool. We seed a real api-key row, then drive
+// `verify_api_key` through the gate AND the real `ApiKeyRepository`. Only the
+// cache / event-bus / blockchain edges stay mocked so the test isolates
+// "allowed role + valid DB key ⇒ valid" from "disallowed role ⇒ denied even
+// when the key is valid". Requires a live Postgres (DATABASE_URL); not part of
+// the infra-free unit run.
+// ---------------------------------------------------------------------------
+
+use iam_persistence::ApiKeyRepository;
+use sqlx::PgPool;
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn verify_api_key_db_gate_and_lookup(pool: PgPool) {
+    let config = mock_config();
+    let jwt = JwtService::new(&config.jwt_secret).unwrap();
+    let api_key_svc = ApiKeyService::new(config.api_key_secret.clone()).unwrap();
+
+    // Seed a real, active key — hashed exactly as the service will hash the
+    // raw value on the request path.
+    let raw_key = "gtx_rbac_integration_test_key";
+    let key_hash = api_key_svc.hash_key(raw_key).unwrap();
+    let key_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO api_keys (id, name, key_hash, role, is_active) VALUES ($1, $2, $3, $4, true)")
+        .bind(key_id)
+        .bind("RBAC Integration Key")
+        .bind(&key_hash)
+        .bind("aggregator-bridge")
+        .execute(&pool)
+        .await
+        .expect("seed api key");
+
+    // Real repo; cache always misses (forces the DB path) and accepts writes.
+    let mut cache = MockCacheTrait::new();
+    cache
+        .expect_get_value()
+        .returning(|_| Box::pin(async { Ok(None) }));
+    cache
+        .expect_set_value()
+        .returning(|_, _, _| Box::pin(async { Ok(()) }));
+
+    // Cache-miss verification publishes an `ApiKeyVerified` event.
+    let mut event_bus = MockEventBusTrait::new();
+    event_bus
+        .expect_publish()
+        .returning(|_| Box::pin(async { Ok(()) }));
+
+    let auth = AuthService::new(
+        Arc::new(MockUserRepositoryTrait::new()),
+        Arc::new(MockWalletRepositoryTrait::new()),
+        Arc::new(ApiKeyRepository::new(pool)),
+        config.clone(),
+        jwt.clone(),
+        api_key_svc,
+        Arc::new(cache),
+        Arc::new(event_bus),
+        Arc::new(MockBlockchainTrait::new()),
+        mock_wallet_service(),
+    );
+    let svc = IdentityGrpcService::new(auth, jwt);
+
+    // Allowed role + valid key ⇒ verified, role echoed from the DB row.
+    let (resp, _) = svc
+        .verify_api_key(ctx_role(ServiceRole::AggregatorBridge), api_key_req(raw_key))
+        .await
+        .expect("verify_api_key should not transport-error");
+    assert!(resp.valid, "valid seeded key must verify");
+    assert_eq!(resp.role, "aggregator-bridge");
+
+    // Disallowed role ⇒ denied at the gate BEFORE any DB lookup, even though
+    // the same key is valid.
+    let err = svc
+        .verify_api_key(ctx_role(ServiceRole::MeterService), api_key_req(raw_key))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PermissionDenied);
+
+    // Allowed role + unknown key ⇒ gate passes, DB miss ⇒ Ok(valid=false).
+    let (miss, _) = svc
+        .verify_api_key(ctx_role(ServiceRole::AggregatorBridge), api_key_req("nope"))
+        .await
+        .expect("unknown key is a denied key, not a transport error");
+    assert!(!miss.valid);
+}

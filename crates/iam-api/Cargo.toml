@@ -31,6 +31,8 @@ async-trait.workspace = true
 
 [dev-dependencies]
 iam-core = { workspace = true, features = ["mocks"] }
+iam-persistence.workspace = true
+sqlx.workspace = true
 axum-test.workspace = true
 mockall.workspace = true
 rstest.workspace = true
