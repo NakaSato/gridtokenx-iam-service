@@ -572,6 +572,47 @@ fn allowlist_invariants_hold() {
 }
 
 // ---------------------------------------------------------------------------
+// ApiError -> ConnectError mapping.
+//
+// `register_user`, `link_wallet`, `get_user_wallet`, `initialize_user_wallet`
+// route every `AuthService` error through `map_api_error`, which reuses
+// `ApiError::status_code()` (the same classification the REST layer applies)
+// instead of collapsing everything to one code. A client-side fault (bad
+// input, duplicate resource, not-found) must stay distinguishable from an
+// infra fault (DB/Redis/blockchain down) so gateway retry logic and 5xx
+// alarms aren't misled.
+// ---------------------------------------------------------------------------
+
+use crate::identity_grpc::map_api_error;
+use iam_core::error::ApiError;
+
+#[test]
+fn map_api_error_distinguishes_client_from_infra_faults() {
+    let cases = [
+        (ApiError::Unauthorized("x".into()), ErrorCode::Unauthenticated),
+        (ApiError::Forbidden("x".into()), ErrorCode::PermissionDenied),
+        (ApiError::BadRequest("x".into()), ErrorCode::InvalidArgument),
+        (ApiError::Validation("x".into()), ErrorCode::InvalidArgument),
+        (ApiError::NotFound("x".into()), ErrorCode::NotFound),
+        (
+            ApiError::Conflict("Username or email already exists".into()),
+            ErrorCode::AlreadyExists,
+        ),
+        (ApiError::Blockchain("x".into()), ErrorCode::Unavailable),
+        (ApiError::ExternalService("x".into()), ErrorCode::Unavailable),
+        (ApiError::RateLimitExceeded("x".into()), ErrorCode::ResourceExhausted),
+        // Infra/unclassified faults stay Internal — never silently downgraded
+        // to a client-fault code that would suppress alarms or retries.
+        (ApiError::Internal("x".into()), ErrorCode::Internal),
+        (ApiError::Redis("x".into()), ErrorCode::Internal),
+    ];
+    for (err, expected) in cases {
+        let mapped = map_api_error(&err).code;
+        assert_eq!(mapped, expected, "{err:?} mapped to {mapped:?}, expected {expected:?}");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // RBAC matrix — runtime gate behaviour for specific roles.
 //
 // `from_headers` maps any non-ApiGateway role straight from the header (no

@@ -92,6 +92,28 @@ impl IdentityGrpcService {
     }
 }
 
+/// Maps an `ApiError` to a `ConnectError`, reusing the same client-vs-infra
+/// classification the REST layer applies via `ApiError::status_code()`
+/// (`iam-core/src/error/types.rs`). Without this, callers can't distinguish
+/// a permanent client fault (e.g. duplicate username -> Conflict) from a
+/// transient infra fault (e.g. DB outage) — both used to surface as plain
+/// `Internal`, which misleads gateway retry logic and 5xx alarms alike.
+pub(crate) fn map_api_error(e: &ApiError) -> ConnectError {
+    use axum::http::StatusCode;
+    let code = match e.status_code() {
+        StatusCode::UNAUTHORIZED => ErrorCode::Unauthenticated,
+        StatusCode::FORBIDDEN => ErrorCode::PermissionDenied,
+        StatusCode::BAD_REQUEST => ErrorCode::InvalidArgument,
+        StatusCode::NOT_FOUND => ErrorCode::NotFound,
+        StatusCode::CONFLICT => ErrorCode::AlreadyExists,
+        StatusCode::BAD_GATEWAY => ErrorCode::Unavailable,
+        StatusCode::TOO_MANY_REQUESTS => ErrorCode::ResourceExhausted,
+        StatusCode::LOCKED => ErrorCode::FailedPrecondition,
+        _ => ErrorCode::Internal,
+    };
+    ConnectError::new(code, format!("{e}"))
+}
+
 
 impl identity::IdentityService for IdentityGrpcService {
     async fn verify_token(
@@ -249,7 +271,7 @@ impl identity::IdentityService for IdentityGrpcService {
                 message: res.message,
                 ..Default::default()
             }, ctx)),
-            Err(e) => Err(ConnectError::new(ErrorCode::Internal, format!("{}", e))),
+            Err(e) => Err(map_api_error(&e)),
         }
     }
 
@@ -278,7 +300,7 @@ impl identity::IdentityService for IdentityGrpcService {
                 message: "Wallet linked successfully".to_string(),
                 ..Default::default()
             }, ctx)),
-            Err(e) => Err(ConnectError::new(ErrorCode::Internal, format!("{}", e))),
+            Err(e) => Err(map_api_error(&e)),
         }
     }
 
@@ -299,7 +321,7 @@ impl identity::IdentityService for IdentityGrpcService {
                 wallet_address,
                 ..Default::default()
             }, ctx)),
-            Err(e) => Err(ConnectError::new(ErrorCode::NotFound, format!("{}", e))),
+            Err(e) => Err(map_api_error(&e)),
         }
     }
 
@@ -328,7 +350,7 @@ impl identity::IdentityService for IdentityGrpcService {
                 transaction_signature: signature,
                 ..Default::default()
             }, ctx)),
-            Err(e) => Err(ConnectError::new(ErrorCode::Internal, format!("{}", e))),
+            Err(e) => Err(map_api_error(&e)),
         }
     }
 }
