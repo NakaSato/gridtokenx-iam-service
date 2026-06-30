@@ -33,7 +33,7 @@ pub async fn register(
 ) -> ApiResult<Json<RegistrationResponse>> {
     // Allow public registration from Gateway or Unknown
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin, ServiceRole::Unknown])
-        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Forbidden(msg.to_string()))?;
 
     let start = Instant::now();
     let result = auth_service.register(
@@ -80,7 +80,7 @@ pub async fn login(
 ) -> ApiResult<Json<AuthResponse>> {
     // Allow public login from Gateway or Unknown
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin, ServiceRole::Unknown])
-        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Forbidden(msg.to_string()))?;
 
     let start = Instant::now();
     let result = auth_service.login(request.username, request.password).await;
@@ -130,7 +130,7 @@ pub async fn refresh(
 ) -> ApiResult<Json<RefreshResponse>> {
     // Same surface as the user-private routes: reached through the gateway.
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Forbidden(msg.to_string()))?;
 
     // `auth` already proves the presented token is valid and unexpired.
     let (access_token, expires_in) = auth_service.refresh_token(&auth.0)?;
@@ -164,7 +164,7 @@ pub async fn verify(
 ) -> ApiResult<Json<VerifyEmailResponse>> {
     // Verification is public
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin, ServiceRole::Unknown])
-        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Forbidden(msg.to_string()))?;
 
     let start = Instant::now();
     let result = auth_service.verify_email(params.token).await;
@@ -218,7 +218,7 @@ pub async fn get_me(
     let claims = auth.0;
     // /me is for users via Web/App, so it should come via ApiGateway
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Forbidden(msg.to_string()))?;
 
     tracing::info!("👤 Handling /me request for user: {}", claims.sub);
     let user = auth_service.get_user_profile(claims.sub).await?;
@@ -250,7 +250,7 @@ pub async fn resend_verification(
     Json(request): Json<ResendVerificationRequest>,
 ) -> ApiResult<Json<iam_core::domain::identity::ResendVerificationResult>> {
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin, ServiceRole::Unknown])
-        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Forbidden(msg.to_string()))?;
 
     let result = auth_service.resend_verification(request.email.trim()).await?;
     Ok(Json(result))
@@ -272,7 +272,7 @@ pub async fn forgot_password(
     Json(request): Json<ForgotPasswordRequest>,
 ) -> ApiResult<Json<ForgotPasswordResponse>> {
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin, ServiceRole::Unknown])
-        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Forbidden(msg.to_string()))?;
 
     auth_service.forgot_password(&request.email).await?;
     Ok(Json(ForgotPasswordResponse {
@@ -298,7 +298,7 @@ pub async fn reset_password(
     Json(request): Json<ResetPasswordRequest>,
 ) -> ApiResult<Json<ResetPasswordResponse>> {
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin, ServiceRole::Unknown])
-        .map_err(|(_code, msg)| iam_core::error::ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| iam_core::error::ApiError::Forbidden(msg.to_string()))?;
 
     auth_service.reset_password(&request.token, &request.new_password).await?;
     Ok(Json(ResetPasswordResponse {

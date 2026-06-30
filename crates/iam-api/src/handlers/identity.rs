@@ -51,7 +51,7 @@ pub async fn onboard_user(
 ) -> ApiResult<Json<OnChainOnboardingResponse>> {
     let claims = auth.0;
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-        .map_err(|(_code, msg)| ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| ApiError::Forbidden(msg.to_string()))?;
 
     let user_type = match request.user_type {
         UserType::Prosumer => iam_core::domain::identity::UserType::Prosumer,
@@ -98,7 +98,7 @@ pub async fn link_wallet(
 ) -> ApiResult<Json<LinkWalletResponse>> {
     let claims = auth.0;
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-        .map_err(|(_code, msg)| ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| ApiError::Forbidden(msg.to_string()))?;
 
     let w = auth_service.link_wallet(
         claims.sub,
@@ -128,7 +128,7 @@ pub async fn list_wallets(
 ) -> ApiResult<Json<WalletListResponse>> {
     let claims = auth.0;
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-        .map_err(|(_code, msg)| ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| ApiError::Forbidden(msg.to_string()))?;
     
     let wallets = auth_service.list_wallets(claims.sub).await?;
     
@@ -158,7 +158,7 @@ pub async fn get_wallet(
 ) -> ApiResult<Json<UserWallet>> {
     let claims = auth.0;
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-        .map_err(|(_code, msg)| ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| ApiError::Forbidden(msg.to_string()))?;
     
     let w = auth_service.get_wallet(claims.sub, wallet_id).await?;
     
@@ -189,7 +189,7 @@ pub async fn update_wallet(
 ) -> ApiResult<Json<UserWallet>> {
     let claims = auth.0;
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-        .map_err(|(_code, msg)| ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| ApiError::Forbidden(msg.to_string()))?;
 
     // Only `is_primary: true` is actionable today (exactly one primary exists,
     // so it is promoted, never toggled off). Reject no-op bodies explicitly.
@@ -226,7 +226,7 @@ pub async fn unlink_wallet(
 ) -> ApiResult<Json<DeleteWalletResponse>> {
     let claims = auth.0;
     role.require_any(&[ServiceRole::ApiGateway, ServiceRole::Admin])
-        .map_err(|(_code, msg)| ApiError::Unauthorized(msg.to_string()))?;
+        .map_err(|(_code, msg)| ApiError::Forbidden(msg.to_string()))?;
     
     auth_service.unlink_wallet(claims.sub, wallet_id).await?;
     Ok(Json(DeleteWalletResponse { message: "Wallet unlinked successfully".to_string() }))
