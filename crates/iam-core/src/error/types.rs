@@ -10,79 +10,112 @@ use super::codes::ErrorCode;
 /// Structured error response
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorResponse {
+    /// The error detail payload.
     pub error: ErrorDetail,
+    /// Request ID for correlating with server logs.
     pub request_id: String,
+    /// RFC3339 timestamp the error was generated.
     pub timestamp: String,
 }
 
+/// The body of an `ErrorResponse` — code, message, and optional extras.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorDetail {
+    /// Structured error code.
     pub code: ErrorCode,
+    /// Numeric form of `code`.
     pub code_number: u16,
+    /// Human-readable, client-safe message.
     pub message: String,
+    /// Extra context, when available.
     pub details: Option<String>,
+    /// Offending field name, for validation errors.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
 }
 
+/// Application-level error type. Maps to an HTTP status (`status_code`) and
+/// a structured `ErrorCode` for clients; converted to an `axum` response via
+/// `IntoResponse`.
 #[derive(Debug, Error)]
 pub enum ApiError {
+    /// Credential check failed.
     #[error("Authentication failed: {0}")]
     Authentication(String),
 
+    /// Caller lacks permission for the requested action.
     #[error("Authorization failed: {0}")]
     Authorization(String),
 
+    /// Malformed or invalid request.
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    /// No valid credentials supplied.
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    /// Caller is explicitly denied access.
     #[error("Forbidden: {0}")]
     Forbidden(String),
 
+    /// Input failed validation rules.
     #[error("Validation error: {0}")]
     Validation(String),
 
+    /// Underlying SQL/database failure.
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
+    /// Redis/cache failure.
     #[error("Redis error: {0}")]
     Redis(String),
 
+    /// Solana/Chain Bridge interaction failure.
     #[error("Blockchain error: {0}")]
     Blockchain(String),
 
+    /// A downstream service call failed.
     #[error("External service error: {0}")]
     ExternalService(String),
 
+    /// Server misconfiguration.
     #[error("Configuration error: {0}")]
     Configuration(String),
 
+    /// Requested resource doesn't exist.
     #[error("Not found: {0}")]
     NotFound(String),
 
+    /// Operation conflicts with existing state.
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    /// Unclassified server-side fault.
     #[error("Internal server error: {0}")]
     Internal(String),
 
+    /// Caller exceeded a rate limit.
     #[error("Rate limit exceeded: {0}")]
     RateLimitExceeded(String),
 
-    // Enhanced error types with codes
+    /// Carries an explicit `ErrorCode` plus message, for cases not covered
+    /// by the named variants above.
     #[error("{1}")]
     WithCode(ErrorCode, String),
 
+    /// Like `WithCode`, plus extra detail text for the client.
     #[error("{1}")]
     WithCodeAndDetails(ErrorCode, String, String),
 
+    /// Validation failure scoped to a specific input field.
     #[error("Validation failed: {field}")]
     ValidationWithField {
+        /// Structured error code for the failure.
         code: ErrorCode,
+        /// Name of the field that failed validation.
         field: String,
+        /// Human-readable validation message.
         message: String,
     },
 }
@@ -97,10 +130,12 @@ impl From<anyhow::Error> for ApiError {
 }
 
 impl ApiError {
+    /// Builds an error with an explicit `ErrorCode` and message.
     pub fn with_code(code: ErrorCode, message: impl Into<String>) -> Self {
         Self::WithCode(code, message.into())
     }
 
+    /// Builds an error with an explicit `ErrorCode`, message, and extra detail.
     pub fn with_details(code: ErrorCode, message: impl Into<String>, details: impl Into<String>) -> Self {
         Self::WithCodeAndDetails(code, message.into(), details.into())
     }

@@ -3,7 +3,9 @@
 //! This module provides a unified error handling system for the entire workspace,
 //! including structured error codes and conversion from third-party errors.
 
+/// `ErrorCode` — the platform-wide structured error-code taxonomy.
 pub mod codes;
+/// `ApiError` and its HTTP/response conversion machinery.
 pub mod types;
 
 // Re-export everything for backward compatibility

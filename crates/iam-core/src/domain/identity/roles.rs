@@ -9,22 +9,27 @@ use std::collections::HashSet;
 pub struct Permission(String);
 
 impl Permission {
+    /// Builds a `"resource:action"` permission, e.g. `Permission::new("energy", "read")`.
     pub fn new(resource: &str, action: &str) -> Self {
         Self(format!("{}:{}", resource, action))
     }
 
+    /// Builds a `"resource:*"` permission that grants every action on `resource`.
     pub fn wildcard(resource: &str) -> Self {
         Self(format!("{}:*", resource))
     }
 
+    /// The resource segment (before the `:`).
     pub fn resource(&self) -> &str {
         self.0.split(':').next().unwrap_or("")
     }
 
+    /// The action segment (after the `:`).
     pub fn action(&self) -> &str {
         self.0.split(':').nth(1).unwrap_or("")
     }
 
+    /// Whether this permission is a `"resource:*"` wildcard.
     pub fn is_wildcard(&self) -> bool {
         self.0.ends_with(":*")
     }
@@ -60,11 +65,17 @@ impl std::fmt::Display for Permission {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
+    /// Default end-user role: read/submit own energy data, trade, manage own profile.
     User,
+    /// Full platform access (`*` on every resource).
     Admin,
+    /// Advanced Metering Infrastructure / meter device role.
     AMI,
+    /// Energy producer: lists offers, sells generated energy.
     Producer,
+    /// Energy consumer: places orders, buys energy.
     Consumer,
+    /// Grid/system operator: meters, readings, analytics, health.
     Operator,
 }
 
@@ -221,6 +232,7 @@ impl std::fmt::Display for Role {
     }
 }
 
+/// Returned by `Role::from_str` when the input doesn't match a known role.
 #[derive(Debug)]
 pub struct RoleParseError(String);
 
