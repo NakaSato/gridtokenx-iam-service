@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 pub struct Event {
     /// Unique event ID.
     pub id: Uuid,
-    /// Event type discriminator (e.g. "UserRegistered", "UserLoggedIn").
+    /// Event type discriminator (e.g. `"UserRegistered"`, `"UserLoggedIn"`).
     pub event_type: String,
     /// ISO-8601 timestamp.
     pub timestamp: String,
@@ -19,6 +19,7 @@ pub struct Event {
 
 impl Event {
     /// Creates a new domain event with the specified type and source.
+    #[must_use]
     pub fn new(event_type: &str, source: &str) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -30,6 +31,7 @@ impl Event {
     }
 
     /// Attaches an arbitrary JSON payload to the event.
+    #[must_use]
     pub fn with_data(mut self, data: serde_json::Value) -> Self {
         self.data = Some(data);
         self
@@ -52,6 +54,7 @@ pub struct OutboxRecord {
 
 impl Event {
     /// User successfully registered.
+    #[must_use]
     pub fn user_registered(user_id: &Uuid, username: &str, email: &str) -> Self {
         Event::new("UserRegistered", "gridtokenx-iam")
             .with_data(serde_json::json!({
@@ -62,6 +65,7 @@ impl Event {
     }
 
     /// User successfully logged in.
+    #[must_use]
     pub fn user_logged_in(user_id: &Uuid, username: &str, ip: Option<&str>) -> Self {
         Event::new("UserLoggedIn", "gridtokenx-iam")
             .with_data(serde_json::json!({
@@ -73,6 +77,7 @@ impl Event {
 
     /// Verification email requested — carries the email-verification token so
     /// the notification service can build the click-to-verify link.
+    #[must_use]
     pub fn verification_email_requested(
         user_id: &Uuid,
         username: &str,
@@ -89,6 +94,7 @@ impl Event {
     }
 
     /// User email verified.
+    #[must_use]
     pub fn email_verified(user_id: &Uuid, username: &str, email: &str, wallet_address: &str) -> Self {
         Event::new("EmailVerified", "gridtokenx-iam")
             .with_data(serde_json::json!({
@@ -100,6 +106,7 @@ impl Event {
     }
 
     /// User successfully onboarded on-chain.
+    #[must_use]
     pub fn user_onboarded(
         user_id: &Uuid,
         wallet_address: &str,
@@ -120,6 +127,7 @@ impl Event {
     }
 
     /// Login attempt (success or failure — for rate-limit monitoring).
+    #[must_use]
     pub fn login_attempt(identifier: &str, success: bool, ip: Option<&str>) -> Self {
         Event::new("LoginAttempt", "gridtokenx-iam")
             .with_data(serde_json::json!({
@@ -130,6 +138,7 @@ impl Event {
     }
 
     /// Account locked due to too many failed attempts.
+    #[must_use]
     pub fn account_locked(identifier: &str, lockout_secs: u64) -> Self {
         Event::new("AccountLocked", "gridtokenx-iam")
             .with_data(serde_json::json!({
@@ -139,6 +148,7 @@ impl Event {
     }
 
     /// API key verified (machine-to-machine auth).
+    #[must_use]
     pub fn api_key_verified(key_name: &str, role: &str) -> Self {
         Event::new("ApiKeyVerified", "gridtokenx-iam")
             .with_data(serde_json::json!({
@@ -148,6 +158,7 @@ impl Event {
     }
 
     /// User wallet linked and registered on-chain.
+    #[must_use]
     pub fn user_wallet_linked(
         user_id: &Uuid,
         wallet_address: &str,
@@ -166,6 +177,7 @@ impl Event {
     }
 
     /// User requested a password reset.
+    #[must_use]
     pub fn password_reset_requested(user_id: &Uuid, email: &str, reset_url: &str) -> Self {
         Event::new("PasswordResetRequested", "gridtokenx-iam")
             .with_data(serde_json::json!({

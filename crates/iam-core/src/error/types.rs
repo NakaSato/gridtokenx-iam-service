@@ -181,6 +181,7 @@ impl ApiError {
     }
 
     /// Get status code
+    #[must_use]
     pub fn status_code(&self) -> StatusCode {
         match self {
             ApiError::Authentication(_)
@@ -259,6 +260,7 @@ impl ApiError {
     }
 
     /// Helper for invalid credentials (common in auth)
+    #[must_use]
     pub fn invalid_credentials() -> Self {
         ApiError::WithCode(ErrorCode::InvalidCredentials, "Invalid username or password".to_string())
     }
@@ -274,38 +276,44 @@ impl ApiError {
     }
 
     /// Helper for service unavailable
+    #[must_use]
     pub fn service_unavailable(service: &str) -> Self {
         ApiError::WithCodeAndDetails(
             ErrorCode::ServiceUnavailable,
-            format!("{} service is currently unavailable", service),
+            format!("{service} service is currently unavailable"),
             "Please try again later".to_string(),
         )
     }
 
     /// Helper for resource already exists
+    #[must_use]
     pub fn already_exists(resource: &str) -> Self {
         ApiError::WithCode(
             ErrorCode::AlreadyExists,
-            format!("{} already exists", resource),
+            format!("{resource} already exists"),
         )
     }
 
     /// Helper for resource not found
+    #[must_use]
     pub fn not_found(resource: &str) -> Self {
-        ApiError::WithCode(ErrorCode::NotFound, format!("{} not found", resource))
+        ApiError::WithCode(ErrorCode::NotFound, format!("{resource} not found"))
     }
 
     /// Helper: Invalid wallet address
+    #[must_use]
     pub fn invalid_wallet() -> Self {
         ApiError::WithCode(ErrorCode::InvalidWalletAddress, "Invalid wallet address".to_string())
     }
 
     /// Helper: Email not verified
+    #[must_use]
     pub fn email_not_verified() -> Self {
         ApiError::WithCode(ErrorCode::EmailNotVerified, "Email not verified".to_string())
     }
 
     /// Helper: Token expired
+    #[must_use]
     pub fn token_expired() -> Self {
         ApiError::WithCode(ErrorCode::TokenExpired, "Token expired".to_string())
     }

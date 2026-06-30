@@ -1,44 +1,52 @@
 /// Cache key patterns for IAM service.
 pub mod cache {
     /// Login attempt counter for rate limiting.
+    #[must_use]
     pub fn login_attempts(identifier: &str) -> String {
-        format!("iam:login_attempts:{}", identifier)
+        format!("iam:login_attempts:{identifier}")
     }
 
     /// Account lock status after too many failed logins.
+    #[must_use]
     pub fn account_lock(identifier: &str) -> String {
-        format!("iam:account_lock:{}", identifier)
+        format!("iam:account_lock:{identifier}")
     }
 
     /// Cached user profile (by user ID).
+    #[must_use]
     pub fn user_profile(user_id: &str) -> String {
-        format!("iam:user:profile:{}", user_id)
+        format!("iam:user:profile:{user_id}")
     }
 
     /// Cached API key lookup (by hash).
+    #[must_use]
     pub fn api_key(key_hash: &str) -> String {
-        format!("iam:api_key:{}", key_hash)
+        format!("iam:api_key:{key_hash}")
     }
 
     /// Email verification token TTL.
+    #[must_use]
     pub fn email_verification_token(token: &str) -> String {
-        format!("iam:email_verify:{}", token)
+        format!("iam:email_verify:{token}")
     }
 
     /// Resend-verification cooldown gate (keyed by user ID, not email, to keep
     /// PII out of Redis). Presence of the key == still within the cooldown.
+    #[must_use]
     pub fn resend_verification_cooldown(user_id: &str) -> String {
-        format!("iam:resend_cooldown:{}", user_id)
+        format!("iam:resend_cooldown:{user_id}")
     }
 
     /// Password reset token TTL.
+    #[must_use]
     pub fn password_reset_token(token: &str) -> String {
-        format!("iam:password_reset:{}", token)
+        format!("iam:password_reset:{token}")
     }
 
     /// IP-based rate limit counter.
+    #[must_use]
     pub fn rate_limit(ip: &str, endpoint: &str) -> String {
-        format!("iam:rate_limit:{}:{}", endpoint, ip)
+        format!("iam:rate_limit:{endpoint}:{ip}")
     }
 }
 

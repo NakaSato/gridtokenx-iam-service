@@ -25,6 +25,7 @@ pub struct Claims {
 
 impl Claims {
     /// Builds claims for `user_id`/`username`/`role`, expiring 24h from now.
+    #[must_use]
     pub fn new(user_id: Uuid, username: String, role: String) -> Self {
         let now = gridtokenx_telemetry::time::now();
         let exp = now + chrono::Duration::hours(24); // 24 hour expiration
@@ -40,16 +41,19 @@ impl Claims {
     }
 
     /// Whether `exp` is in the past.
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         gridtokenx_telemetry::time::now().timestamp() > self.exp
     }
 
     /// Whether `role` matches `required_role` exactly.
+    #[must_use]
     pub fn has_role(&self, required_role: &str) -> bool {
         self.role == required_role
     }
 
     /// Whether `role` matches any of `required_roles`.
+    #[must_use]
     pub fn has_any_role(&self, required_roles: &[&str]) -> bool {
         required_roles.contains(&self.role.as_str())
     }

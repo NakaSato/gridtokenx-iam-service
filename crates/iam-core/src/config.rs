@@ -11,7 +11,7 @@ pub struct Config {
     pub environment: String,
     /// Port for the REST API server.
     pub port: u16,
-    /// PostgreSQL connection string.
+    /// `PostgreSQL` connection string.
     pub database_url: String,
     /// Redis connection string.
     pub redis_url: String,
@@ -37,7 +37,7 @@ pub struct Config {
     pub master_secret: String,
     /// Kafka brokers list (optional).
     pub kafka_brokers: Option<String>,
-    /// RabbitMQ connection URL (optional).
+    /// `RabbitMQ` connection URL (optional).
     pub rabbitmq_url: Option<String>,
     /// SMTP host for sending emails.
     pub smtp_host: String,
@@ -79,6 +79,11 @@ pub struct Config {
 
 impl Config {
     /// Loads configuration from environment variables and .env file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `IAM_DATABASE_URL`/`DATABASE_URL` or `REDIS_URL` is
+    /// unset, or if a numeric/typed variable fails to parse.
     pub fn from_env() -> Result<Self> {
         dotenvy::dotenv().ok();
 

@@ -133,6 +133,7 @@ pub enum ErrorCode {
 
 impl ErrorCode {
     /// Get numeric code
+    #[must_use]
     pub fn code(&self) -> u16 {
         match self {
             // Authentication
@@ -190,6 +191,7 @@ impl ErrorCode {
     }
 
     /// Get user-friendly message
+    #[must_use]
     pub fn message(&self) -> &'static str {
         match self {
             // Authentication

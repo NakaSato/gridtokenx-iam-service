@@ -5,7 +5,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
-/// UserType represents the role of a user in the energy ecosystem (on-chain).
+/// `UserType` represents the role of a user in the energy ecosystem (on-chain).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub enum UserType {
     /// User who both produces and consumes energy.
@@ -14,7 +14,7 @@ pub enum UserType {
     Consumer = 1,
 }
 
-/// UserWallet represents a blockchain wallet linked to a user.
+/// `UserWallet` represents a blockchain wallet linked to a user.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UserWallet {
     /// Unique wallet ID.
@@ -79,7 +79,7 @@ pub struct UserWithHash {
     pub password_hash: String,
 }
 
-/// AuthResult contains the result of a successful authentication.
+/// `AuthResult` contains the result of a successful authentication.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuthResult {
     /// JWT access token.
@@ -90,7 +90,7 @@ pub struct AuthResult {
     pub user: User,
 }
 
-/// RegistrationResult contains the result of a successful registration.
+/// `RegistrationResult` contains the result of a successful registration.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistrationResult {
     /// Unique user ID.
@@ -134,7 +134,7 @@ impl std::fmt::Debug for EmailVerificationState {
     }
 }
 
-/// ResendVerificationResult contains the outcome of a resend-verification request.
+/// `ResendVerificationResult` contains the outcome of a resend-verification request.
 /// The response is intentionally constant (`status = "sent"`) regardless of
 /// whether the email is unknown, unverified, or already verified, to avoid
 /// account enumeration.
@@ -146,7 +146,7 @@ pub struct ResendVerificationResult {
     pub message: String,
 }
 
-/// VerifyEmailResult contains the result of an email verification.
+/// `VerifyEmailResult` contains the result of an email verification.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct VerifyEmailResult {
     /// Whether verification was successful.
@@ -159,7 +159,7 @@ pub struct VerifyEmailResult {
     pub auth: Option<AuthResult>,
 }
 
-/// OnChainOnboardingResult contains the result of an on-chain onboarding.
+/// `OnChainOnboardingResult` contains the result of an on-chain onboarding.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OnChainOnboardingResult {
     /// Whether onboarding was successful.

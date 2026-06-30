@@ -10,31 +10,37 @@ pub struct Permission(String);
 
 impl Permission {
     /// Builds a `"resource:action"` permission, e.g. `Permission::new("energy", "read")`.
+    #[must_use]
     pub fn new(resource: &str, action: &str) -> Self {
-        Self(format!("{}:{}", resource, action))
+        Self(format!("{resource}:{action}"))
     }
 
     /// Builds a `"resource:*"` permission that grants every action on `resource`.
+    #[must_use]
     pub fn wildcard(resource: &str) -> Self {
-        Self(format!("{}:*", resource))
+        Self(format!("{resource}:*"))
     }
 
     /// The resource segment (before the `:`).
+    #[must_use]
     pub fn resource(&self) -> &str {
         self.0.split(':').next().unwrap_or("")
     }
 
     /// The action segment (after the `:`).
+    #[must_use]
     pub fn action(&self) -> &str {
         self.0.split(':').nth(1).unwrap_or("")
     }
 
     /// Whether this permission is a `"resource:*"` wildcard.
+    #[must_use]
     pub fn is_wildcard(&self) -> bool {
         self.0.ends_with(":*")
     }
 
     /// Check if this permission grants access to the requested permission
+    #[must_use]
     pub fn grants(&self, requested: &Permission) -> bool {
         if self.0 == requested.0 {
             return true;
@@ -81,6 +87,7 @@ pub enum Role {
 
 impl Role {
     /// Get all permissions for this role
+    #[must_use]
     pub fn permissions(&self) -> HashSet<Permission> {
         match self {
             Role::User => Self::user_permissions(),
@@ -93,21 +100,25 @@ impl Role {
     }
 
     /// Check if role has a specific permission
+    #[must_use]
     pub fn has_permission(&self, permission: &Permission) -> bool {
         self.permissions().iter().any(|p| p.grants(permission))
     }
 
     /// Check if role can access a permission string
+    #[must_use]
     pub fn can_access(&self, permission: &str) -> bool {
         self.has_permission(&Permission::from(permission))
     }
 
     /// Check if role has any of the specified permissions
+    #[must_use]
     pub fn has_any_permission(&self, permissions: &[Permission]) -> bool {
         permissions.iter().any(|p| self.has_permission(p))
     }
 
     /// Check if role has all of the specified permissions
+    #[must_use]
     pub fn has_all_permissions(&self, permissions: &[Permission]) -> bool {
         permissions.iter().all(|p| self.has_permission(p))
     }
@@ -228,7 +239,7 @@ impl std::fmt::Display for Role {
             Role::Consumer => "consumer",
             Role::Operator => "operator",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
