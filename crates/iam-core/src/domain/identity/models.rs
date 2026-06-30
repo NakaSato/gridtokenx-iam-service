@@ -5,6 +5,29 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
+/// Parameters for `UserRepositoryTrait::create` — bundled to keep the trait
+/// signature under clippy's argument-count limit. Borrows rather than owns,
+/// since every current caller already holds the data and `create` only reads
+/// it for the duration of the call.
+pub struct NewUser<'a> {
+    /// New user's ID (caller-generated, e.g. `Uuid::new_v4()`).
+    pub id: Uuid,
+    /// Username.
+    pub username: &'a str,
+    /// Email address.
+    pub email: &'a str,
+    /// Password hash (never the raw password).
+    pub password_hash: &'a str,
+    /// Assigned role.
+    pub role: &'a str,
+    /// First name, if provided.
+    pub first_name: Option<&'a str>,
+    /// Last name, if provided.
+    pub last_name: Option<&'a str>,
+    /// Email-verification token, if email verification is required.
+    pub verification_token: Option<&'a str>,
+}
+
 /// `UserType` represents the role of a user in the energy ecosystem (on-chain).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub enum UserType {

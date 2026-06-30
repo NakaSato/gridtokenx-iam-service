@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use uuid::Uuid;
 use crate::error::Result;
-use crate::domain::identity::{User, UserWallet, ApiKey, UserWithHash, EmailVerificationState};
+use crate::domain::identity::{User, UserWallet, ApiKey, UserWithHash, EmailVerificationState, NewUser};
 use serde_json::Value;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
@@ -21,17 +21,7 @@ pub trait UserRepositoryTrait: Send + Sync {
     /// Finds a user by their unique user ID.
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>>;
     /// Creates a new user record in the repository.
-    async fn create(
-        &self,
-        id: Uuid,
-        username: &str,
-        email: &str,
-        password_hash: &str,
-        role: &str,
-        first_name: Option<&str>,
-        last_name: Option<&str>,
-        verification_token: Option<&str>,
-    ) -> Result<()>;
+    async fn create(&self, new_user: NewUser<'_>) -> Result<()>;
     /// Marks a user's email as verified and activates the account.
     async fn verify_email(&self, email: &str) -> Result<Option<User>>;
     /// Sets the user's primary on-chain wallet address.

@@ -3,6 +3,7 @@ mod tests {
     use sqlx::PgPool;
     use uuid::Uuid;
     use iam_core::traits::UserRepositoryTrait;
+    use iam_core::domain::identity::NewUser;
     use crate::repository::UserRepository;
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -16,7 +17,16 @@ mod tests {
 
         // 1. Create User — registration inserts an INACTIVE row (is_active = false);
         // the account is dormant until email verification activates it.
-        repo.create(id, &username, &email, password_hash, role, Some("First"), Some("Last"), None).await?;
+        repo.create(NewUser {
+            id,
+            username: &username,
+            email: &email,
+            password_hash,
+            role,
+            first_name: Some("First"),
+            last_name: Some("Last"),
+            verification_token: None,
+        }).await?;
 
         // 1b. The finders filter `is_active = true`, so a freshly created (unverified)
         // user is intentionally not yet resolvable. Guards that create-inactive →
@@ -66,7 +76,16 @@ mod tests {
         let wallet_repo = WalletRepository::new(pool);
         
         let user_id = Uuid::new_v4();
-        user_repo.create(user_id, "walletuser", "wallet@test.com", "hash", "user", None, None, None).await?;
+        user_repo.create(NewUser {
+            id: user_id,
+            username: "walletuser",
+            email: "wallet@test.com",
+            password_hash: "hash",
+            role: "user",
+            first_name: None,
+            last_name: None,
+            verification_token: None,
+        }).await?;
 
         // 1. Link Wallet
         let address = "SolWallet123";
@@ -191,7 +210,16 @@ mod tests {
         let api_key_repo = ApiKeyRepository::new(pool);
         
         let user_id = Uuid::new_v4();
-        user_repo.create(user_id, "keyuser", "key@test.com", "hash", "user", None, None, None).await?;
+        user_repo.create(NewUser {
+            id: user_id,
+            username: "keyuser",
+            email: "key@test.com",
+            password_hash: "hash",
+            role: "user",
+            first_name: None,
+            last_name: None,
+            verification_token: None,
+        }).await?;
 
         // Manual insert since we don't have a create method in the trait yet (usually handled by a service)
         let key_id = Uuid::new_v4();

@@ -256,16 +256,17 @@ impl AuthService {
         let user_id = Uuid::new_v4();
         let verification_token = Uuid::new_v4().to_string();
 
-        self.user_repo.create(
-            user_id,
-            &username,
-            &email,
-            &password_hash,
-            &Role::User.to_string(),
-            first_name.as_deref(),
-            last_name.as_deref(),
-            Some(&verification_token),
-        ).await
+        let role = Role::User.to_string();
+        self.user_repo.create(iam_core::domain::identity::NewUser {
+            id: user_id,
+            username: &username,
+            email: &email,
+            password_hash: &password_hash,
+            role: &role,
+            first_name: first_name.as_deref(),
+            last_name: last_name.as_deref(),
+            verification_token: Some(&verification_token),
+        }).await
         .map_err(|e| {
             if let ApiError::Database(sqlx::Error::Database(db_err)) = &e {
                 if db_err.is_unique_violation() {

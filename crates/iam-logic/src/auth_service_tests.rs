@@ -168,7 +168,7 @@ async fn test_register_success() {
     
     // 1. User creation
     user_repo.expect_create()
-        .returning(|_, _, _, _, _, _, _, _| Box::pin(async move { Ok(()) }));
+        .returning(|_| Box::pin(async move { Ok(()) }));
 
     // 2. Event publish
     event_bus.expect_publish()

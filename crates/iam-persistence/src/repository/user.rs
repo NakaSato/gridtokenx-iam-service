@@ -26,7 +26,7 @@ pub struct UserRow {
 
 use async_trait::async_trait;
 use iam_core::traits::UserRepositoryTrait;
-use iam_core::domain::identity::{User, UserWithHash, UserType, EmailVerificationState};
+use iam_core::domain::identity::{User, UserWithHash, UserType, EmailVerificationState, NewUser};
 
 impl UserRow {
     pub fn into_domain(self) -> User {
@@ -102,17 +102,7 @@ impl UserRepositoryTrait for UserRepository {
         Ok(row.map(|r| r.into_domain()))
     }
 
-    async fn create(
-        &self,
-        id: Uuid,
-        username: &str,
-        email: &str,
-        password_hash: &str,
-        role: &str,
-        first_name: Option<&str>,
-        last_name: Option<&str>,
-        verification_token: Option<&str>,
-    ) -> Result<()> {
+    async fn create(&self, new_user: NewUser<'_>) -> Result<()> {
         sqlx::query(
             "INSERT INTO users (id, username, email, password_hash, role, first_name, last_name, is_active,
                                 email_verification_token, email_verification_sent_at, email_verification_expires_at)
@@ -120,14 +110,14 @@ impl UserRepositoryTrait for UserRepository {
                      CASE WHEN $8 IS NULL THEN NULL ELSE NOW() END,
                      CASE WHEN $8 IS NULL THEN NULL ELSE NOW() + INTERVAL '24 hours' END)",
         )
-        .bind(id)
-        .bind(username)
-        .bind(email)
-        .bind(password_hash)
-        .bind(role)
-        .bind(first_name)
-        .bind(last_name)
-        .bind(verification_token)
+        .bind(new_user.id)
+        .bind(new_user.username)
+        .bind(new_user.email)
+        .bind(new_user.password_hash)
+        .bind(new_user.role)
+        .bind(new_user.first_name)
+        .bind(new_user.last_name)
+        .bind(new_user.verification_token)
         .execute(&self.pool)
         .await
         .map_err(ApiError::from)?;
