@@ -1,3 +1,5 @@
+//! Build script: codegens `ConnectRPC` client/server types from `proto/identity.proto`.
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protos = &["proto/identity.proto"];
     let includes = &["proto"];
