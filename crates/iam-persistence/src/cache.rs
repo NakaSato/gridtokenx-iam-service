@@ -121,12 +121,17 @@ impl CacheService {
     pub async fn increment_with_ttl(&self, key: &str, ttl_secs: u64) -> Result<i64> {
         let mut conn = self.conn.clone();
         let mut pipe = redis::pipe();
+        // MULTI/EXEC replies one value per queued command; `.ignore()` drops the
+        // EXPIRE reply from the parsed result, leaving exactly the INCR reply —
+        // a stray trailing `incr(key, 0)` here previously left 2 non-ignored
+        // replies against a 1-tuple destructure, so every call failed to
+        // deserialize and silently fell back to 0 at the call site (the
+        // lockout counter never advanced — see login_attempts in auth_service.rs).
         let (val,): (i64,) = pipe
             .atomic()
             .incr(key, 1)
             .expire(key, ttl_secs as i64)
             .ignore()
-            .incr(key, 0)
             .query_async(&mut conn)
             .await
             .context("Redis INCR pipeline failed")?;

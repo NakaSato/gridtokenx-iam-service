@@ -103,7 +103,10 @@ impl AuthService {
 
         // ── Rate limiting via Cache ──────────────────────────────────
         let lock_key = iam_core::domain::identity::keys::cache::account_lock(&username);
-        if self.cache.exists(&lock_key).await.unwrap_or(false) {
+        if self.cache.exists(&lock_key).await.unwrap_or_else(|e| {
+            tracing::warn!("Cache EXISTS failed for lock check (fail-open, login proceeds): {}", e);
+            false
+        }) {
             info!("Account temporarily locked: {}", username);
             
             // Publish attempt event
@@ -165,7 +168,10 @@ impl AuthService {
             let attempts = self.cache
                 .increment_with_ttl(&attempts_key, LOGIN_LOCKOUT_SECS)
                 .await
-                .unwrap_or(0u64);
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Cache INCR failed for login-attempts counter (fail-open, attempt not counted): {}", e);
+                    0u64
+                });
 
             // Publish attempt event
             let _ = self.event_bus.publish(&Event::login_attempt(&username, false, None)).await;
