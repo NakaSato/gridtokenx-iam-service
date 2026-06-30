@@ -106,22 +106,22 @@ impl ApiError {
     }
 
     /// Get error code
+    // `WithCode`/`WithCodeAndDetails` bind different field counts, so the
+    // arms can't be merged despite both bodies being `*code`.
+    #[allow(clippy::match_same_arms)]
     pub(crate) fn error_code(&self) -> ErrorCode {
         match self {
             ApiError::Authentication(_) => ErrorCode::InvalidCredentials,
             ApiError::Authorization(_) => ErrorCode::InsufficientPermissions,
-            ApiError::BadRequest(_) => ErrorCode::InvalidInput,
+            ApiError::BadRequest(_) | ApiError::Validation(_) => ErrorCode::InvalidInput,
             ApiError::Unauthorized(_) => ErrorCode::TokenMissing,
             ApiError::Forbidden(_) => ErrorCode::ResourceAccessDenied,
-            ApiError::Validation(_) => ErrorCode::InvalidInput,
             ApiError::NotFound(_) => ErrorCode::NotFound,
             ApiError::Conflict(_) => ErrorCode::Conflict,
             ApiError::Database(_) => ErrorCode::QueryFailed,
-            ApiError::Redis(_) => ErrorCode::ExternalServiceError,
-            ApiError::Blockchain(_) => ErrorCode::InternalServerError,
-            ApiError::ExternalService(_) => ErrorCode::ExternalServiceError,
+            ApiError::Redis(_) | ApiError::ExternalService(_) => ErrorCode::ExternalServiceError,
+            ApiError::Blockchain(_) | ApiError::Internal(_) => ErrorCode::InternalServerError,
             ApiError::Configuration(_) => ErrorCode::ConfigurationError,
-            ApiError::Internal(_) => ErrorCode::InternalServerError,
             ApiError::RateLimitExceeded(_) => ErrorCode::RateLimitExceeded,
             ApiError::WithCode(code, _) => *code,
             ApiError::WithCodeAndDetails(code, _, _) => *code,
@@ -150,16 +150,21 @@ impl ApiError {
         match self {
             ApiError::Authentication(_)
             | ApiError::Unauthorized(_)
-            | ApiError::WithCode(ErrorCode::InvalidCredentials, _)
-            | ApiError::WithCode(ErrorCode::TokenExpired, _)
-            | ApiError::WithCode(ErrorCode::TokenInvalid, _)
-            | ApiError::WithCode(ErrorCode::TokenMissing, _)
-            | ApiError::WithCode(ErrorCode::EmailNotVerified, _) => StatusCode::UNAUTHORIZED,
+            | ApiError::WithCode(
+                ErrorCode::InvalidCredentials
+                | ErrorCode::TokenExpired
+                | ErrorCode::TokenInvalid
+                | ErrorCode::TokenMissing
+                | ErrorCode::EmailNotVerified,
+                _,
+            ) => StatusCode::UNAUTHORIZED,
 
             ApiError::Authorization(_)
             | ApiError::Forbidden(_)
-            | ApiError::WithCode(ErrorCode::InsufficientPermissions, _)
-            | ApiError::WithCode(ErrorCode::ResourceAccessDenied, _) => StatusCode::FORBIDDEN,
+            | ApiError::WithCode(
+                ErrorCode::InsufficientPermissions | ErrorCode::ResourceAccessDenied,
+                _,
+            ) => StatusCode::FORBIDDEN,
 
             ApiError::BadRequest(_)
             | ApiError::Validation(_)
@@ -168,27 +173,33 @@ impl ApiError {
             // Without these arms InvalidEmail/InvalidFormat/InvalidPassword/etc. fell
             // through the WithCode(_) catch-all to 500, polluting 5xx alarms and
             // mislabeling a bad email as a server error to clients.
-            | ApiError::WithCode(ErrorCode::InvalidInput, _)
-            | ApiError::WithCode(ErrorCode::MissingRequiredField, _)
-            | ApiError::WithCode(ErrorCode::InvalidFormat, _)
-            | ApiError::WithCode(ErrorCode::InvalidWalletAddress, _)
-            | ApiError::WithCode(ErrorCode::InvalidAmount, _)
-            | ApiError::WithCode(ErrorCode::InvalidEmail, _)
-            | ApiError::WithCode(ErrorCode::InvalidPassword, _)
-            | ApiError::WithCode(ErrorCode::PasswordTooWeak, _) => StatusCode::BAD_REQUEST,
+            | ApiError::WithCode(
+                ErrorCode::InvalidInput
+                | ErrorCode::MissingRequiredField
+                | ErrorCode::InvalidFormat
+                | ErrorCode::InvalidWalletAddress
+                | ErrorCode::InvalidAmount
+                | ErrorCode::InvalidEmail
+                | ErrorCode::InvalidPassword
+                | ErrorCode::PasswordTooWeak,
+                _,
+            ) => StatusCode::BAD_REQUEST,
 
             ApiError::NotFound(_) | ApiError::WithCode(ErrorCode::NotFound, _) => {
                 StatusCode::NOT_FOUND
             }
 
             ApiError::Conflict(_)
-            | ApiError::WithCode(ErrorCode::Conflict, _)
-            | ApiError::WithCode(ErrorCode::AlreadyExists, _) => StatusCode::CONFLICT,
+            | ApiError::WithCode(ErrorCode::Conflict | ErrorCode::AlreadyExists, _) => {
+                StatusCode::CONFLICT
+            }
 
             ApiError::Blockchain(_)
             | ApiError::ExternalService(_)
-            | ApiError::WithCode(ErrorCode::ExternalServiceUnavailable, _)
-            | ApiError::WithCode(ErrorCode::ServiceUnavailable, _) => StatusCode::BAD_GATEWAY,
+            | ApiError::WithCode(
+                ErrorCode::ExternalServiceUnavailable | ErrorCode::ServiceUnavailable,
+                _,
+            ) => StatusCode::BAD_GATEWAY,
 
             ApiError::RateLimitExceeded(_)
             | ApiError::WithCode(ErrorCode::RateLimitExceeded, _) => StatusCode::TOO_MANY_REQUESTS,
@@ -311,13 +322,12 @@ impl axum::response::IntoResponse for ApiError {
                 code,
                 code_number: code.code(),
                 message: match &self {
-                    ApiError::WithCode(_, msg) | ApiError::WithCodeAndDetails(_, msg, _) => {
-                        msg.clone()
-                    }
-                    ApiError::BadRequest(msg) => msg.clone(),
+                    ApiError::WithCode(_, msg)
+                    | ApiError::WithCodeAndDetails(_, msg, _)
+                    | ApiError::BadRequest(msg)
+                    | ApiError::Validation(msg)
+                    | ApiError::Internal(msg) => msg.clone(),
                     ApiError::ValidationWithField { message, .. } => message.clone(),
-                    ApiError::Validation(msg) => msg.clone(),
-                    ApiError::Internal(msg) => msg.clone(),
                     _ => code.message().to_string(),
                 },
                 details: self.error_details(),
