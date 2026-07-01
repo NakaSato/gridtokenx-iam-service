@@ -54,13 +54,6 @@ impl JwtService {
             .map(|data| data.claims)
     }
 
-    pub fn validate_token(&self, token: &str) -> Result<bool> {
-        match self.decode_token(token) {
-            Ok(claims) => Ok(!claims.is_expired()),
-            Err(_) => Ok(false),
-        }
-    }
-
     pub fn refresh_token(&self, old_token: &str) -> Result<String> {
         let claims = self.decode_token(old_token)?;
 
@@ -151,9 +144,6 @@ mod tests {
         assert_eq!(decoded.sub, user_id);
         assert_eq!(decoded.username, "testuser");
         assert_eq!(decoded.role, Role::User.to_string());
-
-        // Validate
-        assert!(service.validate_token(&token).unwrap());
     }
 
     #[test]
@@ -167,10 +157,7 @@ mod tests {
         claims.exp = Utc::now().timestamp() - 600; // Force expiry 10 mins ago
 
         let token = service.encode_token(&claims).unwrap();
-        
-        // Validation should fail
-        assert!(!service.validate_token(&token).unwrap());
-        
+
         // Decoding should return Unauthorized error
         let result = service.decode_token(&token);
         assert!(result.is_err(), "Expected error for expired token, but got success");
@@ -189,7 +176,6 @@ mod tests {
         
         let decoded = service.decode_token(&refreshed_token).expect("Failed to decode refreshed token");
         assert_eq!(decoded.sub, user_id);
-        assert!(service.validate_token(&refreshed_token).unwrap());
     }
 
     #[test]
