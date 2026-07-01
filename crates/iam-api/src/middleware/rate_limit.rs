@@ -46,12 +46,18 @@ fn parse_limit(raw: &str, default: (u64, u64)) -> (u64, u64) {
 ///
 /// The `/login` and `/register` budgets are env-overridable
 /// (`IAM_LOGIN_LIMIT` / `IAM_REGISTER_LIMIT`, each `"limit,window_secs"`) so a
-/// dev fleet onboard can lift the tight prod defaults without a rebuild.
+/// dev fleet onboard can lift the tight prod defaults without a rebuild. The
+/// catch-all general bucket (everything else, including `/verify`) is overridable
+/// too via `IAM_GENERAL_LIMIT` — a bulk onboard calls register -> verify -> login
+/// per meter, so `/verify`'s shared 100/60s budget became the binding wall once
+/// the other two were raised (a single-IP simulator onboarding thousands of
+/// meters exhausts 100 requests/min on `/verify` long before `/register`'s
+/// per-hour budget).
 fn limits_for_path(path: &str) -> (u64, u64) {
     match path {
         p if p.ends_with("/login") => env_limit("IAM_LOGIN_LIMIT", (10, 60)),
         p if p.ends_with("/register") => env_limit("IAM_REGISTER_LIMIT", (5, 3600)),
-        _ => (100, 60), // General limit
+        _ => env_limit("IAM_GENERAL_LIMIT", (100, 60)),
     }
 }
 
